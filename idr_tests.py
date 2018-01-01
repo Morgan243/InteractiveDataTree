@@ -2,7 +2,7 @@ import mock
 import pandas as pd
 import os
 import unittest
-import interactive_data_repo as idr
+import interactive_data_tree as idr
 import tempfile
 import shutil
 
@@ -103,6 +103,25 @@ class InteractiveDataRepo(unittest.TestCase):
         ld_s = lvl1.test_series.load()
         pd.util.testing.assert_series_equal(df.a, ld_s)
 
+    def test_multiplex_storage(self):
+        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        lvl1 = rt.mkrepo('lvl1')
+        df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
+        lvl1.save(df, 'test_df', storage_type='hdf')
+        lvl1.save('not a df', 'test_df', storage_type='pickle')
+
+        ld_df = lvl1.test_df.load()
+        pd.util.testing.assert_frame_equal(df, ld_df)
+        pd.util.testing.assert_frame_equal(df, lvl1.test_df.hdf.load())
+        self.assertEqual('not a df', lvl1.test_df.pickle.load())
+
+        lvl1.save(df.a, 'test_series', storage_type='hdf')
+        ld_s = lvl1.test_series.load()
+        pd.util.testing.assert_series_equal(df.a, ld_s)
+
+        lvl1.test_df.delete(storage_type='hdf')
+        self.assertEqual('not a df', lvl1.test_df.load())
+
     def test_summary(self):
         rt = idr.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
@@ -131,6 +150,9 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual(lvl3.foobar, lvl3['foobar'])
         self.assertEqual(lvl3.foobar, rt['lvl1']['lvl2']['lvl3']['foobar'])
 
+        with self.assertRaises(KeyError):
+            t = lvl1['not_there']
+
     def test_name_collisions(self):
         rt = idr.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -149,12 +171,10 @@ class InteractiveDataRepo(unittest.TestCase):
             lvl1 = rt.mkrepo('lvl1 invalid')
 
         with self.assertRaises(ValueError):
-            rt.save('some obe', 'invalid id')
+            rt.save('some obj', 'invalid id')
 
 # TODO:
-# - Test repo and object with same base name at the same level
 # - Handle wrong types and check types within reason (e.g. strings!)
-# - Test invalid python names, restrict to only those
 # - Basic search functionality off of tree
 #   - Maybe use Wikipedia vocab to do n-gram similatiry between query and doc
 #   - Do similarity between code cells?

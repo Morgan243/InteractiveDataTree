@@ -1,12 +1,13 @@
-from glob import glob
+# Author: Morgan Stuart
 import json
 import pickle
 import pandas as pd
 import os
-
-
 import keyword
 import tokenize
+from datetime import datetime
+from glob import glob
+
 
 # From: https://stackoverflow.com/questions/12700893/how-to-check-if-a-string-is-a-valid-python-identifier-including-keyword-check
 def isidentifier(ident):
@@ -49,80 +50,96 @@ def isidentifier(ident):
 
 
 idr_config = dict(storage_root_dir='/home/morgan/.idr_root.repo',
-                  repo_extension='repo')
+                  repo_extension='repo',
+                  metadata_extension='mdjson')
 
 # IDEAS
+# - __repr__ for output in notbook as HTML
+# - Other notebook detection purposes?
 # - Most recent (list most recently accessed/written)
-#
+# -
 
 #######
-hdf_file_extension = '.hdf'
-hdf_data_level = '/data'
-metadata_extension = 'mdjson'
-
-#####
-def read_json(path):
-    with open(path, 'r') as f:
-        obj = json.load(f)
-    return obj
-
-def write_json(obj, path):
-    with open(path, 'w') as f:
-        json.dump(obj, f)
-
-type_storage_lookup = {pd.DataFrame: 'hdf',
-                       pd.Series: 'hdf'}
-
-storage_type_priority_order = ['hdf', 'pickle']
-
+# Storage Interfaces
 class StorageInterface(object):
     extension = 'pkl'
+
     def __init__(self, path):
         if path[-len(self.extension):] != self.extension:
             self.path = path + '.' + self.extension
         else:
             self.path = path
 
-        self.md_path = self.path + '.' + metadata_extension
+        self.md_path = self.path + '.' + idr_config['metadata_extension']
 
     def is_file(self):
         return os.path.isfile(self.path)
 
-    def read(self):
+    def load(self):
         with open(self.path, mode='rb') as f:
             obj = pickle.load(f)
         return obj
 
-    def write(self, obj):
+    def save(self, obj, **md_kwargs):
         with open(self.path, mode='wb') as f:
             pickle.dump(obj, f)
 
-    def write_metadata(self, **md_kwargs):
+        self.write_metadata(obj=obj, **md_kwargs)
+
+    def write_metadata(self, obj=None, **md_kwargs):
+        if obj is not None:
+            md_kwargs['obj_type'] = str(type(obj))
+
+        md_kwargs['write_time'] = datetime.now().isoformat()
+
         md = self.read_metadata()
         md.append(md_kwargs)
-        write_json(md, self.md_path)
+        with open(self.md_path, 'w') as f:
+            json.dump(md, f)
 
     def read_metadata(self):
         if os.path.isfile(self.md_path):
-            md = read_json(self.md_path)
+            with open(self.md_path, 'r') as f:
+                md = json.load(f)
         else:
             md = []
         return md
 
+    def get_vector_representation(self):
+        raise NotImplementedError()
+
+    def get_terms(self):
+        md = self.read_metadata()
+        str_md_terms = [v for k, v in md.items() if isinstance(v, str)]
+        return str_md_terms
+
+
 class HDFStorageInterface(StorageInterface):
     extension = 'hdf'
+    hdf_data_level = '/data'
 
-    def read(self):
+    def load(self):
         hdf_store = pd.HDFStore(self.path, mode='r')
-        obj = hdf_store[hdf_data_level]
+        obj = hdf_store[HDFStorageInterface.hdf_data_level]
         hdf_store.close()
         return obj
 
-    def write(self, obj):
+    def save(self, obj, **md_kwargs):
         hdf_store = pd.HDFStore(self.path, mode='w')
-        hdf_store.put(hdf_data_level, obj, format='fixed')
+        hdf_store.put(HDFStorageInterface.hdf_data_level,
+                      obj, format='fixed')
         hdf_store.close()
 
+        self.write_metadata(obj=obj, **md_kwargs)
+
+    def write_metadata(self, obj=None, **md_kwargs):
+        if isinstance(obj, pd.DataFrame):
+            md_kwargs['columns'] = list(str(c) for c in obj.columns)
+            md_kwargs['index'] = list(str(i) for i in obj.index[:1000])
+        super(HDFStorageInterface, self).write_metadata(**md_kwargs)
+
+#######
+# Data structures to hold and map interfaces with names/extensions
 storage_interfaces = dict(
     pickle=StorageInterface,
     hdf=HDFStorageInterface,
@@ -130,29 +147,49 @@ storage_interfaces = dict(
 extension_to_interface_name_map = {v.extension: k
                                    for k, v in storage_interfaces.items()}
 
+type_storage_lookup = {pd.DataFrame: 'hdf',
+                       pd.Series: 'hdf'}
+
+storage_type_priority_order = ['hdf', 'pickle']
+
+########
+# Hierarchical structure
+# Tree -> Leaf -> Storage Types
+# All many to many
 class RepoLeaf(object):
     def __init__(self, parent_repo, name):
         self.parent_repo = parent_repo
         self.name = name
 
         self.save_path = os.path.join(self.parent_repo.idr_prop['repo_root'], self.name)
-        self.md_path = self.save_path + metadata_extension
+        self.typed_path_map = dict()
         self.__update_typed_paths()
 
     def __call__(self, *args, **kwargs):
         return self.load(storage_type=None)
 
     def __update_typed_paths(self):
+        mde = idr_config['metadata_extension']
+        repe = idr_config['repo_extension']
+        cur_types = set(self.typed_path_map.keys())
+
         self.typed_path_map = {os.path.split(p)[-1].split('.')[-1]: p
                                for p in glob(self.save_path + '*')
-                               if p[-len(metadata_extension):] != metadata_extension
-                               and p[-len(idr_config['repo_extension']):] != idr_config['repo_extension']
+                               if p[-len(mde):] != mde
+                               and p[-len(repe):] != repe
                                }
         self.typed_path_map = {extension_to_interface_name_map[k]: v
                                for k, v in self.typed_path_map.items()}
 
         self.typed_path_map = {k: storage_interfaces[k](path=v)
                                for k, v in self.typed_path_map.items()}
+        next_types = set(self.typed_path_map.keys())
+        for t in (cur_types - next_types):
+            delattr(self, t)
+
+        for t in next_types:
+            #setattr(self, t, functools.partial(self.typed_path_map[t]., storage_type=t))
+            setattr(self, t, self.typed_path_map[t])
 
     def read_metadata(self, storage_type=None):
         if storage_type is not None:
@@ -161,6 +198,7 @@ class RepoLeaf(object):
 
             md = self.typed_path_map[storage_type].read_metadata()
         else:
+            md = None
             for po in storage_type_priority_order:
                 if po in self.typed_path_map:
                     md = self.typed_path_map[po].read_metadata()
@@ -171,7 +209,7 @@ class RepoLeaf(object):
         """
         Save Python object at this location
         """
-        # Need target save type for conflict detection and the eventual write
+        # Need target save type for conflict detection and the eventual save
         if storage_type is None:
             storage_type = type_storage_lookup.get(type(obj), 'pickle')
 
@@ -192,16 +230,21 @@ class RepoLeaf(object):
                 return
 
         print("Saving to: %s.%s (%s)" % (self.parent_repo.name, self.name, storage_type))
-        store_int.write(obj)
-        store_int.write_metadata(**md_props)
+        store_int.save(obj, **md_props)
         print("Save Complete")
 
         self.__update_typed_paths()
 
-    def delete(self):
-        filenames = glob(self.save_path + '.*')
-        print("Deleting: %s" % ",".join(filenames))
-        [os.remove(fn) for fn in filenames]
+    def delete(self, storage_type=None):
+        if storage_type is None:
+            filenames = glob(self.save_path + '.*')
+            print("Deleting: %s" % ",".join(filenames))
+            [os.remove(fn) for fn in filenames]
+        else:
+            p = self.typed_path_map[storage_type].path
+            md_p = self.typed_path_map[storage_type].md_path
+            os.remove(p)
+            os.remove(md_p)
         self.__update_typed_paths()
         self.parent_repo.refresh()
 
@@ -209,14 +252,13 @@ class RepoLeaf(object):
         store_int = None
         if storage_type is None:
             for po in storage_type_priority_order:
-                if po not in self.typed_path_map:
-                    continue
-
-                store_int = self.typed_path_map[po]
+                if po in self.typed_path_map:
+                    store_int = self.typed_path_map[po]
+                    break
         else:
             store_int = self.typed_path_map[storage_type]
 
-        return store_int.read()
+        return store_int.load()
 
 class RepoTree(object):
     def __init__(self, repo_root=None, parent_repo=None):
@@ -288,14 +330,12 @@ class RepoTree(object):
             self.__repo_object_table = dict()
             self.__sub_repo_table = dict()
 
-
     def __assign_property_tree(self):
         for base_name, rl in self.__repo_object_table.items():
             setattr(self, base_name, rl)
 
         for repo_name, rt in self.__sub_repo_table.items():
             setattr(self, repo_name, rt)
-
 
     def __build_property_tree_from_file_system(self):
         self.__clear_property_tree(clear_internal_tables=True)
@@ -305,7 +345,11 @@ class RepoTree(object):
         ### Separate out objects stored in this repo from sub-repos
         for f in all_dir_items:
             # Build listing of all base file names (no extension)
-            base_name = f.split('.')[0]
+            dot_split = f.split('.')
+            if not isidentifier(dot_split[0]):
+                raise ValueError("File/dir name '%s' is not a valid identifier" % dot_split[0])
+
+            base_name = dot_split[0]
             is_file = os.path.isfile(os.path.join(self.idr_prop['repo_root'], f))
 
             # Primary distinction - Repo (dir) vs. Obj (file)
@@ -321,9 +365,11 @@ class RepoTree(object):
                 setattr(self, sub_repo_name, self.__sub_repo_table[sub_repo_name])
         return self
 
-
     def refresh(self):
         self.__build_property_tree_from_file_system()
+
+    def delete(self, name, storage_type=None):
+        self.__repo_object_table[name].delete(storage_type=storage_type)
 
     def save(self, obj, name, author=None, comments=None, tags=None,
              storage_type=None, **extra_kwargs):
