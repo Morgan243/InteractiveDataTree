@@ -53,11 +53,13 @@ idr_config = dict(storage_root_dir='/home/morgan/.idr_root.repo',
                   repo_extension='repo',
                   metadata_extension='mdjson')
 
-# IDEAS
 # - __repr__ for output in notbook as HTML
 # - Other notebook detection purposes?
 # - Most recent (list most recently accessed/written)
-# -
+# - if a property is accessed that is not loaded (i.e. written from another session)
+#   then need to catch this and read file system for updated structure and return correctly
+# - monkey patching docstrings
+# - add a log of all operations in root
 
 #######
 # Storage Interfaces
@@ -319,6 +321,52 @@ class RepoTree(object):
         else:
             raise KeyError("%s is not in the tree" % str(key))
 
+    def get_parent_repo_names(self):
+        rep = self#.idr_prop['parent_repo']
+        repos = list()
+        while rep.idr_prop['parent_repo'] is not None:
+            rep = rep.idr_prop['parent_repo']
+            repos.append(rep.name)
+
+        return list(reversed(repos))
+
+    def _ipython_key_completions_(self):
+        k = list(self.__sub_repo_table.keys())
+        k += list(self.__repo_object_table.keys())
+        return k
+
+    def _repr_html_(self):
+        repos_html = """
+        <h4>Sub Repos</h4>
+        %s
+        """ % "\n".join("<li>%s</li>" % rt for rt in self.__sub_repo_table.keys())
+        objects_html = """
+        <h4>Objects</h4>
+        %s
+        """ % "\n".join("<li>%s</li>" % rt for rt in self.__repo_object_table.keys())
+
+        if self.idr_prop['parent_repo'] is not None:
+            parent_repo_str = "->".join(['Root']
+                                        + self.get_parent_repo_names()[1:]
+                                        + [self.name])
+            #parent_repo_str += "-> %s" % self.name
+        else:
+            parent_repo_str = "Root (%s)" % self.name
+        html = """
+        {repo_parent_header}
+        <div style="width: 30%;">
+            <div style="float:left; width: 50%">
+            {repos_list}
+            </div>
+            <div style="float:right;">
+            {objs_list}
+            </div>
+        </div>
+        """.format(repo_parent_header=parent_repo_str,
+                   repos_list=repos_html, objs_list=objects_html)
+
+        return html
+
     def __clear_property_tree(self, clear_internal_tables=False):
         for base_name, rl in self.__repo_object_table.items():
             delattr(self, base_name)
@@ -361,7 +409,8 @@ class RepoTree(object):
                     setattr(self, base_name, self.__repo_object_table[base_name])
             else:
                 sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
-                self.__sub_repo_table[sub_repo_name] = RepoTree(repo_root=os.path.join(self.idr_prop['repo_root'], f))
+                self.__sub_repo_table[sub_repo_name] = RepoTree(repo_root=os.path.join(self.idr_prop['repo_root'], f),
+                                                                parent_repo=self)
                 setattr(self, sub_repo_name, self.__sub_repo_table[sub_repo_name])
         return self
 
