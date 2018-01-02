@@ -122,6 +122,13 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl1.test_df.delete(storage_type='hdf')
         self.assertEqual('not a df', lvl1.test_df.load())
 
+    def test_parent_repo_listing(self):
+        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        lvl4 = rt.mkrepo('lvl1').mkrepo('lvl2').mkrepo('lvl3').mkrepo('lvl4')
+        pr = lvl4.get_parent_repo_names()
+        expected_pr = ['lvl1', 'lvl2', 'lvl3']
+        self.assertEqual(expected_pr, pr[1:])
+
     def test_summary(self):
         rt = idr.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
