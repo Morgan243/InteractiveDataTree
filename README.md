@@ -40,7 +40,7 @@ procedure, or implement and entirely different metadata storage all together.
 ```python
 import interactive_data_tree as idt
 
-# Repository Tree Root defaults to ~/.idr_root.repo
+# Repository Tree Root defaults to ~/.idt_root.repo
 tr = idt.RepoTree()
 
 # Make a new Sub-repo
@@ -49,7 +49,7 @@ lvl1 = tr.mkrepo('lvl1')
 # Save out a string - DataTree will default to pickle if doesn't have a better type
 lvl1.save('foo bar str object', name='test_foobar')
 
-# Flexible ways to accessibility
+# Flexible ways to access
 print(lvl1.test_foobar.load())
 print(tr['lvl1'].test_foobar.load())
 ```

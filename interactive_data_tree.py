@@ -19,8 +19,7 @@ def isidentifier(name):
 
 
 idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
-                  repo_extension='repo',
-                  metadata_extension='mdjson')
+                  repo_extension='repo', metadata_extension='mdjson')
 
 # - __repr__ for output in notbook as HTML
 # - Other notebook detection purposes?
@@ -108,6 +107,7 @@ class HDFStorageInterface(StorageInterface):
             md_kwargs['columns'] = list(str(c) for c in obj.columns)
             md_kwargs['index'] = list(str(i) for i in obj.index[:1000])
         super(HDFStorageInterface, self).write_metadata(**md_kwargs)
+
 
 #######
 # Data structures to hold and map interfaces with names/extensions
@@ -290,6 +290,22 @@ class RepoTree(object):
         else:
             raise KeyError("%s is not in the tree" % str(key))
 
+    def __getattr__(self, item):
+
+        # Only called if an unknown attribute is accessed
+        # - if so, then check that the object wasn't created by another instance
+        # i.e. rescan repo before throwing an error
+        self.__build_property_tree_from_file_system()
+
+        if item in self.__repo_object_table:
+            return self.__repo_object_table[item]
+        elif item in self.__sub_repo_table:
+            return self.__sub_repo_table[item]
+        else:
+            dot_path = ".".join(self.get_parent_repo_names())
+            dot_path = "root" if len(dot_path) == 0 else dot_path
+            raise AttributeError("'%s' is not under repo %s" % (item, dot_path))
+
     def get_parent_repo_names(self):
         rep = self#.idr_prop['parent_repo']
         repos = list()
@@ -374,13 +390,15 @@ class RepoTree(object):
                 # Objects leaf is created from base name - Leaf object will map to types
                 self.__repo_object_table[base_name] = RepoLeaf(parent_repo=self, name=base_name)
                 # Repos take precedent for base name matches
-                if base_name not in self.__sub_repo_table:
-                    setattr(self, base_name, self.__repo_object_table[base_name])
+                #if base_name not in self.__sub_repo_table:
+                #    setattr(self, base_name, self.__repo_object_table[base_name])
             else:
                 sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
                 self.__sub_repo_table[sub_repo_name] = RepoTree(repo_root=os.path.join(self.idr_prop['repo_root'], f),
                                                                 parent_repo=self)
-                setattr(self, sub_repo_name, self.__sub_repo_table[sub_repo_name])
+                #setattr(self, sub_repo_name, self.__sub_repo_table[sub_repo_name])
+
+        self.__assign_property_tree()
         return self
 
     def refresh(self):

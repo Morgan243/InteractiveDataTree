@@ -1,3 +1,5 @@
+import os
+import pickle
 import mock
 import pandas as pd
 import unittest
@@ -123,6 +125,18 @@ class InteractiveDataRepo(unittest.TestCase):
 
         lvl1.test_df.delete(storage_type='hdf')
         self.assertEqual('not a df', lvl1.test_df.load())
+
+    def test_attribute_axis_race(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+
+        with self.assertRaises(AttributeError):
+            rt.test_str.load()
+
+        t_str = 'foobar'
+        tmp_path = os.path.join(rt.idr_prop['repo_root'], 'test_str.pkl')
+        pickle.dump(t_str, open(tmp_path, 'wb'))
+
+        self.assertEqual(t_str, rt.test_str.load())
 
     def test_parent_repo_listing(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
