@@ -5,7 +5,10 @@ import unittest
 import interactive_data_tree as idr
 import tempfile
 import shutil
+import sys
 
+EXEC_PYTHON3 = sys.version_info > (3, 0)
+builtins_input_mock_str = 'builtins.input' if EXEC_PYTHON3 else '__builtin__.input'
 
 class InteractiveDataRepo(unittest.TestCase):
     @staticmethod
@@ -46,7 +49,7 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual(t_obj, rep_tree.test_string())
 
         # Test aborting the operation ('n') - check it didn't do through after
-        with mock.patch('builtins.input', return_value='n'):
+        with mock.patch(builtins_input_mock_str, return_value='n'):
             n_t_obj = 'another string'
             rep_tree.save(n_t_obj, 'test_string')
 
@@ -54,7 +57,7 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual(t_obj, rep_tree.test_string.load())
         self.assertEqual(t_obj, rep_tree.test_string())
 
-        with mock.patch('builtins.input', return_value='y'):
+        with mock.patch(builtins_input_mock_str, return_value='y'):
             n_t_obj = 'another string'
             rep_tree.save(n_t_obj, 'test_string')
 

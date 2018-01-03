@@ -8,48 +8,17 @@ import tokenize
 from datetime import datetime
 from glob import glob
 
+from ast import parse
 
-# From: https://stackoverflow.com/questions/12700893/how-to-check-if-a-string-is-a-valid-python-identifier-including-keyword-check
-def isidentifier(ident):
-    """Determines if string is valid Python identifier."""
-
-    # Smoke test — if it's not string, then it's not identifier, but we don't
-    # want to just silence exception. It's better to fail fast.
-    if not isinstance(ident, str):
-        raise TypeError("expected str, but got {!r}".format(type(ident)))
-
-    # Quick test — if string is in keyword list, it's definitely not an ident.
-    if keyword.iskeyword(ident):
+def isidentifier(name):
+    try:
+        parse('{} = None'.format(name))
+        return True
+    except (SyntaxError, ValueError, TypeError) as e:
         return False
 
-    readline = (lambda: (yield ident.encode('utf-8-sig')))().__next__
-    tokens = list(tokenize.tokenize(readline))
 
-    # You should get exactly 3 tokens
-    if len(tokens) != 3:
-        return False
-
-    # First one is ENCODING, it's always utf-8 because we explicitly passed in
-    # UTF-8 BOM with ident.
-    if tokens[0].type != tokenize.ENCODING:
-        return False
-
-    # Second is NAME, identifier.
-    if tokens[1].type != tokenize.NAME:
-        return False
-
-    # Name should span all the string, so there would be no whitespace.
-    if ident != tokens[1].string:
-        return False
-
-    # Third is ENDMARKER, ending stream
-    if tokens[2].type != tokenize.ENDMARKER:
-        return False
-
-    return True
-
-
-idr_config = dict(storage_root_dir='/home/morgan/.idr_root.repo',
+idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idr_root'),
                   repo_extension='repo',
                   metadata_extension='mdjson')
 
