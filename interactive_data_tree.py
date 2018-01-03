@@ -18,7 +18,7 @@ def isidentifier(name):
         return False
 
 
-idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idr_root'),
+idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
                   repo_extension='repo',
                   metadata_extension='mdjson')
 
