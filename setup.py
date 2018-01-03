@@ -1,6 +1,7 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 setup(name='InteractiveDataTree',
-      version='.01',
+      version='.1',
       py_modules=['interactive_data_repo'],
+      install_requires=['tables', 'mock']
       )
 

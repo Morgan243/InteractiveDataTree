@@ -1,8 +1,7 @@
 import mock
 import pandas as pd
-import os
 import unittest
-import interactive_data_tree as idr
+import interactive_data_tree as idt
 import tempfile
 import shutil
 import sys
@@ -22,7 +21,7 @@ class InteractiveDataRepo(unittest.TestCase):
         shutil.rmtree(self.repo_root_path)
 
     def test_repo_creation(self):
-        rep_tree = idr.RepoTree(repo_root=self.repo_root_path)
+        rep_tree = idt.RepoTree(repo_root=self.repo_root_path)
         self.assertEqual(rep_tree.idr_prop['repo_root'], self.repo_root_path + '.repo')
         rep_tree.mkrepo(name='lvl1a')
 
@@ -34,7 +33,7 @@ class InteractiveDataRepo(unittest.TestCase):
             rep_tree.mkrepo(name='lvl1a', err_on_exists=True)
 
     def test_obj_save_overwrite_delete(self):
-        rep_tree = idr.RepoTree(repo_root=self.repo_root_path)
+        rep_tree = idt.RepoTree(repo_root=self.repo_root_path)
         #rep_tree.mkrepo(name='lvl1a')
         t_obj = 'some string'
         rep_tree.save(t_obj, 'test_string')
@@ -74,12 +73,12 @@ class InteractiveDataRepo(unittest.TestCase):
         rep_tree.test_string_num_2.load()
 
     def test_load_exceptions(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         with self.assertRaises(ValueError):
             rt.load('something not there')
 
     def test_listing(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
         rt.lvl1.mkrepo('lvl2')
         t_str = 'foo bar'
@@ -95,7 +94,7 @@ class InteractiveDataRepo(unittest.TestCase):
             rt.lvl1.list(list_objs=False, list_repos=False)
 
     def test_pandas_storage(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
         lvl1.save(df, 'test_df', storage_type='hdf')
@@ -107,7 +106,7 @@ class InteractiveDataRepo(unittest.TestCase):
         pd.util.testing.assert_series_equal(df.a, ld_s)
 
     def test_multiplex_storage(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
         lvl1.save(df, 'test_df', storage_type='hdf')
@@ -126,22 +125,22 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual('not a df', lvl1.test_df.load())
 
     def test_parent_repo_listing(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl4 = rt.mkrepo('lvl1').mkrepo('lvl2').mkrepo('lvl3').mkrepo('lvl4')
         pr = lvl4.get_parent_repo_names()
         expected_pr = ['lvl1', 'lvl2', 'lvl3']
         self.assertEqual(expected_pr, pr[1:])
 
     def test_summary(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
         rt.summary()
 
     def test_default_init(self):
-        rt = idr.RepoTree(repo_root=None)
+        rt = idt.RepoTree(repo_root=None)
 
     def test_metadata(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
         lvl1.save(df, 'test_df', storage_type='hdf', comments='foobar', author='tester')
@@ -151,7 +150,7 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual('tester', lvl1.test_df.read_metadata(storage_type='hdf')[-1]['author'])
 
     def test_getitem(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         self.assertEqual(lvl1, rt['lvl1'])
         lvl3 = lvl1.mkrepo('lvl2').mkrepo('lvl3')
@@ -164,7 +163,7 @@ class InteractiveDataRepo(unittest.TestCase):
             t = lvl1['not_there']
 
     def test_name_collisions(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         rt.save('str object', name='lvl1')
 
@@ -176,7 +175,7 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual(rt.load('lvl1'), 'str object')
 
     def test_invalid_identifier(self):
-        rt = idr.RepoTree(repo_root=self.repo_root_path)
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
         with self.assertRaises(ValueError):
             lvl1 = rt.mkrepo('lvl1 invalid')
 
