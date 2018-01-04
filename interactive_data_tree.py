@@ -3,12 +3,19 @@ import json
 import pickle
 import pandas as pd
 import os
-import keyword
-import tokenize
+import time
 from datetime import datetime
 from glob import glob
-
 from ast import parse
+import sys
+
+
+IS_PYTHON3 = sys.version_info > (3, 0)
+
+if IS_PYTHON3:
+    fs_except = FileExistsError
+else:
+    fs_except = OSError
 
 def isidentifier(name):
     try:
@@ -19,15 +26,37 @@ def isidentifier(name):
 
 
 idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
-                  repo_extension='repo', metadata_extension='mdjson')
+                  repo_extension='repo', metadata_extension='mdjson',
+                  lock_extension='lock')
 
-# - __repr__ for output in notbook as HTML
 # - Other notebook detection purposes?
-# - Most recent (list most recently accessed/written)
-# - if a property is accessed that is not loaded (i.e. written from another session)
-#   then need to catch this and read file system for updated structure and return correctly
 # - monkey patching docstrings
 # - add a log of all operations in root
+#   - Most recent (list most recently accessed/written)
+
+# - Better support for dot paths (relative repo provided on save)
+# - Enable references between objects
+#   - Simply store a set of dot paths in the metadata
+
+class LockFile(object):
+    def __init__(self, path, poll_interval=1):
+        self.path = path
+        self.poll_interval = poll_interval
+        self.locked = False
+
+    def __enter__(self):
+        while True:
+            try:
+                self.fs_lock = os.open(self.path,
+                                       os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except fs_except as e:
+                time.sleep(self.poll_interval)
+        self.locked = True
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        os.close(self.fs_lock)
+        os.remove(self.path)
 
 #######
 # Storage Interfaces
@@ -40,21 +69,26 @@ class StorageInterface(object):
         else:
             self.path = path
 
+        self.lock_file = self.path + '.' + idr_config['lock_extension']
+
         self.md_path = self.path + '.' + idr_config['metadata_extension']
+        self.lock_md_file = self.md_path + '.' + idr_config['lock_extension']
 
     def is_file(self):
         return os.path.isfile(self.path)
 
     def load(self):
-        with open(self.path, mode='rb') as f:
-            obj = pickle.load(f)
-        return obj
+        with LockFile(self.lock_file):
+            with open(self.path, mode='rb') as f:
+                obj = pickle.load(f)
+            return obj
 
     def save(self, obj, **md_kwargs):
-        with open(self.path, mode='wb') as f:
-            pickle.dump(obj, f)
+        with LockFile(self.lock_file):
+            with open(self.path, mode='wb') as f:
+                pickle.dump(obj, f)
 
-        self.write_metadata(obj=obj, **md_kwargs)
+            self.write_metadata(obj=obj, **md_kwargs)
 
     def write_metadata(self, obj=None, **md_kwargs):
         if obj is not None:
@@ -62,15 +96,21 @@ class StorageInterface(object):
 
         md_kwargs['write_time'] = datetime.now().isoformat()
 
-        md = self.read_metadata()
-        md.append(md_kwargs)
-        with open(self.md_path, 'w') as f:
-            json.dump(md, f)
+        with LockFile(self.lock_md_file):
+            md = self.read_metadata(lock=False)
+            md.append(md_kwargs)
+            with open(self.md_path, 'w') as f:
+                json.dump(md, f)
 
-    def read_metadata(self):
+    def read_metadata(self, lock=True):
         if os.path.isfile(self.md_path):
-            with open(self.md_path, 'r') as f:
-                md = json.load(f)
+            if lock:
+                with LockFile(self.lock_md_file):
+                    with open(self.md_path, 'r') as f:
+                        md = json.load(f)
+            else:
+                with open(self.md_path, 'r') as f:
+                    md = json.load(f)
         else:
             md = []
         return md
@@ -87,18 +127,21 @@ class StorageInterface(object):
 class HDFStorageInterface(StorageInterface):
     extension = 'hdf'
     hdf_data_level = '/data'
+    hdf_format = 'fixed'
 
     def load(self):
-        hdf_store = pd.HDFStore(self.path, mode='r')
-        obj = hdf_store[HDFStorageInterface.hdf_data_level]
-        hdf_store.close()
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='r')
+            obj = hdf_store[HDFStorageInterface.hdf_data_level]
+            hdf_store.close()
         return obj
 
     def save(self, obj, **md_kwargs):
-        hdf_store = pd.HDFStore(self.path, mode='w')
-        hdf_store.put(HDFStorageInterface.hdf_data_level,
-                      obj, format='fixed')
-        hdf_store.close()
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='w')
+            hdf_store.put(HDFStorageInterface.hdf_data_level,
+                          obj, format=HDFStorageInterface.hdf_format)
+            hdf_store.close()
 
         self.write_metadata(obj=obj, **md_kwargs)
 
@@ -126,14 +169,14 @@ storage_type_priority_order = ['hdf', 'pickle']
 ########
 # Hierarchical structure
 # Tree -> Leaf -> Storage Types
-# All many to many
+# All one to many
 class RepoLeaf(object):
     def __init__(self, parent_repo, name):
         self.parent_repo = parent_repo
         self.name = name
 
         self.save_path = os.path.join(self.parent_repo.idr_prop['repo_root'], self.name)
-        self.typed_path_map = dict()
+        self.type_to_storage_interface_map = dict()
         self.__update_typed_paths()
 
     def __call__(self, *args, **kwargs):
@@ -142,37 +185,37 @@ class RepoLeaf(object):
     def __update_typed_paths(self):
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
-        cur_types = set(self.typed_path_map.keys())
+        cur_types = set(self.type_to_storage_interface_map.keys())
 
-        self.typed_path_map = {os.path.split(p)[-1].split('.')[-1]: p
-                               for p in glob(self.save_path + '*')
-                               if p[-len(mde):] != mde
-                               and p[-len(repe):] != repe
-                               }
-        self.typed_path_map = {extension_to_interface_name_map[k]: v
-                               for k, v in self.typed_path_map.items()}
+        self.tmp = {os.path.split(p)[-1].split('.')[-1]: p
+                                              for p in glob(self.save_path + '*')
+                                              if p[-len(mde):] != mde
+                                              and p[-len(repe):] != repe
+                                              }
+        self.tmp = {extension_to_interface_name_map[k]: v
+                    for k, v in self.tmp.items()}
 
-        self.typed_path_map = {k: storage_interfaces[k](path=v)
-                               for k, v in self.typed_path_map.items()}
-        next_types = set(self.typed_path_map.keys())
+        self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v)
+                                              for k, v in self.tmp.items()}
+        # Delete types that are no longer present on the FS
+        next_types = set(self.type_to_storage_interface_map.keys())
         for t in (cur_types - next_types):
             delattr(self, t)
 
         for t in next_types:
-            #setattr(self, t, functools.partial(self.typed_path_map[t]., storage_type=t))
-            setattr(self, t, self.typed_path_map[t])
+            setattr(self, t, self.type_to_storage_interface_map[t])
 
     def read_metadata(self, storage_type=None):
         if storage_type is not None:
-            if storage_type not in self.typed_path_map:
+            if storage_type not in self.type_to_storage_interface_map:
                 raise ValueError("Type %s does not exist for %s" % (storage_type, self.name))
 
-            md = self.typed_path_map[storage_type].read_metadata()
+            md = self.type_to_storage_interface_map[storage_type].read_metadata()
         else:
             md = None
             for po in storage_type_priority_order:
-                if po in self.typed_path_map:
-                    md = self.typed_path_map[po].read_metadata()
+                if po in self.type_to_storage_interface_map:
+                    md = self.type_to_storage_interface_map[po].read_metadata()
                     break
         return md
 
@@ -188,7 +231,7 @@ class RepoLeaf(object):
         store_int = storage_interfaces[storage_type](self.save_path)
 
         # Double Check - file exists there or file is registered in memory
-        if store_int.is_file() or storage_type in self.typed_path_map:
+        if store_int.is_file() or storage_type in self.type_to_storage_interface_map:
             prompt = "An object named '%s' (%s) in %s already exists" % (self.name,
                                                                          storage_type,
                                                                          self.parent_repo.name)
@@ -206,14 +249,15 @@ class RepoLeaf(object):
 
         self.__update_typed_paths()
 
+    # TODO: Move delete to storage interface, perform with lock?
     def delete(self, storage_type=None):
         if storage_type is None:
             filenames = glob(self.save_path + '.*')
             print("Deleting: %s" % ",".join(filenames))
             [os.remove(fn) for fn in filenames]
         else:
-            p = self.typed_path_map[storage_type].path
-            md_p = self.typed_path_map[storage_type].md_path
+            p = self.type_to_storage_interface_map[storage_type].path
+            md_p = self.type_to_storage_interface_map[storage_type].md_path
             os.remove(p)
             os.remove(md_p)
         self.__update_typed_paths()
@@ -223,11 +267,11 @@ class RepoLeaf(object):
         store_int = None
         if storage_type is None:
             for po in storage_type_priority_order:
-                if po in self.typed_path_map:
-                    store_int = self.typed_path_map[po]
+                if po in self.type_to_storage_interface_map:
+                    store_int = self.type_to_storage_interface_map[po]
                     break
         else:
-            store_int = self.typed_path_map[storage_type]
+            store_int = self.type_to_storage_interface_map[storage_type]
 
         return store_int.load()
 
@@ -414,13 +458,12 @@ class RepoTree(object):
 
         self.__clear_property_tree()
 
-        leaf = RepoLeaf(parent_repo=self, name=name)
+        leaf = self.__repo_object_table.get(name, RepoLeaf(parent_repo=self, name=name))
         leaf.save(obj, storage_type=storage_type, author=author,
                   comments=comments, tags=tags, **extra_kwargs)
 
         self.__repo_object_table[name] = leaf
         self.__assign_property_tree()
-        #self.__build_property_tree_from_file_system()
 
     def load(self, name):
         if name not in self.__repo_object_table:
