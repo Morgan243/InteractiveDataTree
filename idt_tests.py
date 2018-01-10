@@ -9,7 +9,8 @@ import shutil
 import sys
 
 EXEC_PYTHON3 = sys.version_info > (3, 0)
-builtins_input_mock_str = 'builtins.input' if EXEC_PYTHON3 else '__builtin__.input'
+# Patching the builtin directly doesn't seem to always work in Python 2
+builtins_input_mock_str = 'interactive_data_tree.prompt_input'
 
 class InteractiveDataRepo(unittest.TestCase):
     @staticmethod

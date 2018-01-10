@@ -1,4 +1,5 @@
 # Author: Morgan Stuart
+import abc
 import json
 import pickle
 import pandas as pd
@@ -14,7 +15,9 @@ IS_PYTHON3 = sys.version_info > (3, 0)
 
 if IS_PYTHON3:
     fs_except = FileExistsError
+    prompt_input = input
 else:
+    prompt_input = raw_input
     fs_except = OSError
 
 def isidentifier(name):
@@ -26,10 +29,19 @@ def isidentifier(name):
 
 
 idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
+                  master_log='LOG',
                   repo_extension='repo', metadata_extension='mdjson',
-                  lock_extension='lock')
+                  lock_extension='lock',
+                  date_format='%h %d %Y (%I:%M:%S %p)')
 
-# - Other notebook detection purposes?
+shared_metadata = dict(notebook_name=None, author=None, project=None)
+base_master_log_entry = dict(repo_tree=None,
+                             repo_leaf=None,
+                             storage_type=None,
+                             repo_operation=None,
+                             timestamp=None,
+                             notebook_path=None, author=None)
+
 # - monkey patching docstrings
 # - add a log of all operations in root
 #   - Most recent (list most recently accessed/written)
@@ -37,6 +49,17 @@ idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_r
 # - Better support for dot paths (relative repo provided on save)
 # - Enable references between objects
 #   - Simply store a set of dot paths in the metadata
+# - Log interface for easier adjustable verbosity and logging
+
+# idt.set_local_var_to_notebook_name(var_name="""idt.shared_metadata[\\'notebook_name\\']""")
+def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
+    from IPython import get_ipython
+    ipython = get_ipython()
+
+    js = """IPython.notebook.kernel.execute('%s = ' + '"' + IPython.notebook.notebook_name + '"')""" % var_name
+    ipython.run_cell_magic('javascript', '', js)
+
+
 
 class LockFile(object):
     def __init__(self, path, poll_interval=1):
@@ -63,7 +86,8 @@ class LockFile(object):
 class StorageInterface(object):
     extension = 'pkl'
 
-    def __init__(self, path):
+    def __init__(self, path, name):
+        self.name = name
         if path[-len(self.extension):] != self.extension:
             self.path = path + '.' + self.extension
         else:
@@ -92,9 +116,10 @@ class StorageInterface(object):
 
     def write_metadata(self, obj=None, **md_kwargs):
         if obj is not None:
-            md_kwargs['obj_type'] = str(type(obj))
+            #md_kwargs['obj_type'] = str(type(obj))
+            md_kwargs['obj_type'] = type(obj).__name__
 
-        md_kwargs['write_time'] = datetime.now().isoformat()
+        md_kwargs['write_time'] = datetime.now().strftime(idr_config['date_format'])
 
         with LockFile(self.lock_md_file):
             md = self.read_metadata(lock=False)
@@ -123,6 +148,26 @@ class StorageInterface(object):
         str_md_terms = [v for k, v in md.items() if isinstance(v, str)]
         return str_md_terms
 
+    @staticmethod
+    def _build_html_body_(md):
+        #md = self.read_metadata()[-1]
+
+        html_str = """
+        <b>Author</b>: {author} <br>
+        <b>Last Write</b>: {ts} <br>
+        <b>Comments</b>: {comments} <br>
+        <b>Type</b>: {ty} <br>
+        <b>Tags</b>: {tags} <br>
+        """.format(author=md['author'],
+                   comments=md['comments'], ts=md['write_time'],
+                   ty=md['obj_type'], tags=md['tags'])
+        return html_str
+
+    def _repr_html_(self):
+        md = self.read_metadata()[-1]
+        html_str = """<h3> {name} </h3>""".format(name=self.name)
+        html_str += StorageInterface._build_html_body_(md)
+        return html_str
 
 class HDFStorageInterface(StorageInterface):
     extension = 'hdf'
@@ -131,9 +176,10 @@ class HDFStorageInterface(StorageInterface):
 
     def load(self):
         with LockFile(self.lock_file):
-            hdf_store = pd.HDFStore(self.path, mode='r')
-            obj = hdf_store[HDFStorageInterface.hdf_data_level]
-            hdf_store.close()
+            #hdf_store = pd.HDFStore(self.path, mode='r')
+            #obj = hdf_store[HDFStorageInterface.hdf_data_level]
+            obj = pd.read_hdf(self.path, mode='r')
+            #hdf_store.close()
         return obj
 
     def save(self, obj, **md_kwargs):
@@ -145,11 +191,53 @@ class HDFStorageInterface(StorageInterface):
 
         self.write_metadata(obj=obj, **md_kwargs)
 
+    def sample(self, n=5):
+        with LockFile(self.lock_file):
+            #hdf_store = pd.HDFStore(self.path, mode='r')
+            #obj = hdf_store[HDFStorageInterface.hdf_data_level]
+            obj = pd.read_hdf(self.path, mode='r', stop=n)
+            #hdf_store.close()
+        return obj
+
+
     def write_metadata(self, obj=None, **md_kwargs):
         if isinstance(obj, pd.DataFrame):
             md_kwargs['columns'] = list(str(c) for c in obj.columns)
-            md_kwargs['index'] = list(str(i) for i in obj.index[:1000])
-        super(HDFStorageInterface, self).write_metadata(**md_kwargs)
+
+        md_kwargs['index_head'] = list(str(i) for i in obj.index[:5])
+        md_kwargs['length'] = len(obj)
+
+        super(HDFStorageInterface, self).write_metadata(obj=obj, **md_kwargs)
+
+    def _repr_html_(self):
+        md = self.read_metadata()[-1]
+
+        basic_descrip = StorageInterface._build_html_body_(md)
+        extra_descrip = """
+        <b>Num Entries </b> : {num_entries} <br>
+        <b>Columns</b> ({n_cols}) : {col_sample} <br>
+        <b>Index Head</b> : {ix_head} <br>
+        """.format(num_entries=md['length'],
+                   n_cols=len(md['columns']),
+                   col_sample=", ".join(md['columns'][:10]),
+                   ix_head=", ".join(md['index_head']))
+
+
+        div_template = """
+        <div style="width: 40%;">
+            <div style="float:left; width: 50%">
+            {basic_description}
+            </div>
+            <div style="float:right;">
+            {extra_description}
+            </div>
+        </div>
+        """.format(basic_description=basic_descrip,
+                   extra_description=extra_descrip)
+
+        html_str = """<h3> {name} </h3>""".format(name=self.name)
+        html_str += div_template
+        return html_str
 
 
 #######
@@ -171,6 +259,7 @@ storage_type_priority_order = ['hdf', 'pickle']
 # Tree -> Leaf -> Storage Types
 # All one to many
 class RepoLeaf(object):
+    __metaclass__ = abc.ABCMeta
     def __init__(self, parent_repo, name):
         self.parent_repo = parent_repo
         self.name = name
@@ -181,6 +270,35 @@ class RepoLeaf(object):
 
     def __call__(self, *args, **kwargs):
         return self.load(storage_type=None)
+
+    def __update_doc_str(self):
+        docs = self.name + "\n\n"
+        for st in storage_type_priority_order:
+            if st not in self.type_to_storage_interface_map:
+                continue
+
+            md = self.read_metadata(storage_type=st)
+
+            if len(md) == 0:
+                docs = "No metadata!"
+                break
+            else:
+                md = md[-1]
+
+            auth = md.get("author")
+            comm = md.get("comments")
+            ts = md.get("write_time")
+            ty = md.get('obj_type')
+            tags = md.get('tags')
+
+            docs += st + "\n" + "-"*len(st) + "\n"
+            docs += "  Author: " + (auth if auth is not None else "No author") + "\n"
+            docs += "  Timestamp: " + (ts if ts is not None else "No timestamp") + "\n"
+            docs += "  Comments: " + (comm if comm is not None else "No comments") + "\n"
+            docs += "  Type: " + (ty if ty is not None else "No type") + "\n"
+            docs += "  Tags: " + (tags if tags is not None else "No tags") + "\n"
+            docs += "\n\n"
+        self.__doc__ = docs
 
     def __update_typed_paths(self):
         mde = idr_config['metadata_extension']
@@ -195,7 +313,7 @@ class RepoLeaf(object):
         self.tmp = {extension_to_interface_name_map[k]: v
                     for k, v in self.tmp.items()}
 
-        self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v)
+        self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v, name=self.name)
                                               for k, v in self.tmp.items()}
         # Delete types that are no longer present on the FS
         next_types = set(self.type_to_storage_interface_map.keys())
@@ -204,6 +322,27 @@ class RepoLeaf(object):
 
         for t in next_types:
             setattr(self, t, self.type_to_storage_interface_map[t])
+
+        self.__update_doc_str()
+
+    def _repr_html_(self):
+
+        for st in storage_type_priority_order:
+            if st in self.type_to_storage_interface_map:
+                #md = self.read_metadata(storage_type=st)[-1]
+                return self.type_to_storage_interface_map[st]._repr_html_()
+
+        #html_str = """
+        #<h3> {name} </h3>
+        #<b>Author</b>: {author} <br>
+        #<b>Last Write</b>: {ts} <br>
+        #<b>Comments</b>: {comments} <br>
+        #<b>Type</b>: {ty} <br>
+        #<b>Tags</b>: {tags} <br>
+        #""".format(name=self.name, author=md['author'],
+        #           comments=md['comments'], ts=md['write_time'],
+        #           ty=md['obj_type'], tags=md['tags'])
+        #return html_str
 
     def read_metadata(self, storage_type=None):
         if storage_type is not None:
@@ -219,7 +358,7 @@ class RepoLeaf(object):
                     break
         return md
 
-    def save(self, obj, storage_type=None, **md_props):
+    def save(self, obj, storage_type=None, auto_overwrite=False, **md_props):
         """
         Save Python object at this location
         """
@@ -228,20 +367,25 @@ class RepoLeaf(object):
             storage_type = type_storage_lookup.get(type(obj), 'pickle')
 
         # Construct the filesystem path using a typed extension
-        store_int = storage_interfaces[storage_type](self.save_path)
+        store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
 
         # Double Check - file exists there or file is registered in memory
         if store_int.is_file() or storage_type in self.type_to_storage_interface_map:
-            prompt = "An object named '%s' (%s) in %s already exists" % (self.name,
-                                                                         storage_type,
-                                                                         self.parent_repo.name)
-            prompt += "Overwrite this object? (y/n)"
-            y = input(prompt)
-            if y == 'y' or y == 'yes':
-                print("Proceeding with overwrite...")
+            if auto_overwrite:
+                print("Auto overwriting '%s' (%s) in %s " % (self.name,
+                                                             storage_type,
+                                                             self.parent_repo.name))
             else:
-                print("Aborting...")
-                return
+                prompt = "An object named '%s' (%s) in %s already exists" % (self.name,
+                                                                             storage_type,
+                                                                             self.parent_repo.name)
+                prompt += "\nOverwrite this object? (y/n)"
+                y = prompt_input(prompt)
+                if y == 'y' or y == 'yes':
+                    print("Proceeding with overwrite...")
+                else:
+                    print("Aborting...")
+                    return
 
         print("Saving to: %s.%s (%s)" % (self.parent_repo.name, self.name, storage_type))
         store_int.save(obj, **md_props)
@@ -350,6 +494,12 @@ class RepoTree(object):
             dot_path = "root" if len(dot_path) == 0 else dot_path
             raise AttributeError("'%s' is not under repo %s" % (item, dot_path))
 
+    def get_root(self):
+        rep = self
+        while rep.idr_prop['parent_repo'] is not None:
+            rep = rep.idr_prop['parent_repo']
+        return rep
+
     def get_parent_repo_names(self):
         rep = self#.idr_prop['parent_repo']
         repos = list()
@@ -358,6 +508,44 @@ class RepoTree(object):
             repos.append(rep.name)
 
         return list(reversed(repos))
+
+    def _load_master_log(self):
+        root_repo = self.get_root()
+        log_name = idr_config['master_log']
+        log_exists = log_name in root_repo.list(list_repos=False)
+        if not log_exists:
+            print("Log doesn't exist yet, creating it at %s.%s" % (self.name, log_name) )
+            root_repo.save([], name=log_name, author='system',
+                           comments='log of events across entire tree',
+                           tags='log')
+
+        return root_repo.load(name=log_name)
+
+    def _write_master_log(self, log_data):
+        root_repo = self.get_root()
+        log_name = idr_config['master_log']
+
+        root_repo.save(log_data, name=log_name, author='system',
+                       comments='log of events across entire tree',
+                       tags='log', auto_overwrite=True)
+
+    def _append_to_master_log(self, operation,
+                              leaf=None, storage_type=None,
+                              author=None):
+        log_data = self._load_master_log()
+
+        entry = dict(base_master_log_entry)
+        entry['repo_tree'] = self.get_parent_repo_names() + [self.name]
+        entry['repo_leaf'] = None if leaf is None else leaf.name
+        entry['storage_type'] = None if storage_type is None else storage_type.extension
+        entry['repo_operation'] = operation
+        entry['timestamp'] = datetime.now()
+        nbp = os.path.join(os.getcwd(), shared_metadata['notebook_name'])
+        entry['notebook_path'] = nbp
+        entry['author'] = author if author is not None else shared_metadata.get('author')
+
+        log_data.append(entry)
+        self._write_master_log(log_data)
 
     def _ipython_key_completions_(self):
         k = list(self.__sub_repo_table.keys())
@@ -396,12 +584,42 @@ class RepoTree(object):
 
         return html
 
+    def __update_doc_str(self):
+        docs = "Repository Name: " + self.name + "\n\n"
+
+        sub_repos = list(self.__sub_repo_table.keys())
+        repo_objs = list(self.__repo_object_table.keys())
+
+        if len(sub_repos) > 0:
+            sr_str = "\n".join("%s (%d)" % (sr_name, len(sr.list()))
+                                for sr_name, sr in self.__sub_repo_table.items())
+        else:
+            sr_str = "No sub-repositories"
+
+        if len(repo_objs) > 0:
+            ro_str = "\n".join("%s [%s]" % (ro_name, ", ".join(ro.type_to_storage_interface_map))
+                               for ro_name, ro in self.__repo_object_table.items())
+        else:
+            ro_str = "No objects stored"
+
+        d_str = """Objects in Repo
+----------------
+{ro}
+
+Sub-Repositories
+----------------
+{sr}\n\n""".format(ro=ro_str, sr=sr_str)
+
+        self.__doc__ = docs + d_str
+
     def __clear_property_tree(self, clear_internal_tables=False):
         for base_name, rl in self.__repo_object_table.items():
-            delattr(self, base_name)
+            if hasattr(self, base_name):
+                delattr(self, base_name)
 
         for repo_name, rt in self.__sub_repo_table.items():
-            delattr(self, repo_name)
+            if hasattr(self, repo_name):
+                delattr(self, repo_name)
 
         if clear_internal_tables:
             self.__repo_object_table = dict()
@@ -413,6 +631,8 @@ class RepoTree(object):
 
         for repo_name, rt in self.__sub_repo_table.items():
             setattr(self, repo_name, rt)
+
+        self.__update_doc_str()
 
     def __build_property_tree_from_file_system(self):
         self.__clear_property_tree(clear_internal_tables=True)
