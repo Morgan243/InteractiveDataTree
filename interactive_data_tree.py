@@ -46,6 +46,7 @@ base_master_log_entry = dict(repo_tree=None,
 # - add a log of all operations in root
 #   - Most recent (list most recently accessed/written)
 
+# - Repo (dir) metadata - store create time of repo
 # - Better support for dot paths (relative repo provided on save)
 # - Enable references between objects
 #   - Simply store a set of dot paths in the metadata
@@ -62,7 +63,18 @@ def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
 
 
 class LockFile(object):
+    """
+    A context object (use in 'with' statement) that attempts to create
+    a lock file on entry, with blocking/retrying until successful
+    """
     def __init__(self, path, poll_interval=1):
+        """
+        Parameters
+        ----------
+        path : lock file path as string
+        poll_interval : integer
+            Time between retries while blocking on lock file
+        """
         self.path = path
         self.poll_interval = poll_interval
         self.locked = False
@@ -84,6 +96,11 @@ class LockFile(object):
 #######
 # Storage Interfaces
 class StorageInterface(object):
+    """
+    Base storage interface representing an arbitrary python object
+    stored using pickle. New storage interfaces should be derived
+    from this class.
+    """
     extension = 'pkl'
 
     def __init__(self, path, name):
@@ -98,16 +115,36 @@ class StorageInterface(object):
         self.md_path = self.path + '.' + idr_config['metadata_extension']
         self.lock_md_file = self.md_path + '.' + idr_config['lock_extension']
 
-    def is_file(self):
+    def __is_file(self):
         return os.path.isfile(self.path)
 
     def load(self):
+        """
+        Locks the object and reads the data from the filesystem
+
+        Returns
+        -------
+        Object stored
+        """
         with LockFile(self.lock_file):
             with open(self.path, mode='rb') as f:
                 obj = pickle.load(f)
             return obj
 
     def save(self, obj, **md_kwargs):
+        """
+        Locks the object and writes the object and metadata to the
+        filesystem.
+
+        Parameters
+        ----------
+        obj : Serializable Python object
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
         with LockFile(self.lock_file):
             with open(self.path, mode='wb') as f:
                 pickle.dump(obj, f)
@@ -115,8 +152,24 @@ class StorageInterface(object):
             self.write_metadata(obj=obj, **md_kwargs)
 
     def write_metadata(self, obj=None, **md_kwargs):
+        """
+        Locks metadata file, reads current contents, and appends
+        md_kwargs key-value pairs to the metadata.
+
+        Parameters
+        ----------
+        obj : object to which the metadata pertains
+            If the object is provided, then the type name of
+            the object can be stored in the metadata automatically.
+            Derived classes can include other automatic metadata
+            extraction (see HDF).
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
         if obj is not None:
-            #md_kwargs['obj_type'] = str(type(obj))
             md_kwargs['obj_type'] = type(obj).__name__
 
         md_kwargs['write_time'] = datetime.now().strftime(idr_config['date_format'])
@@ -128,6 +181,19 @@ class StorageInterface(object):
                 json.dump(md, f)
 
     def read_metadata(self, lock=True):
+        """
+        Read entire metadata history from storage, with optional
+        locking.
+
+        Parameters
+        ----------
+        lock : bool (default=True)
+            Whether or not to lock the metadata file before reading.
+
+        Returns
+        -------
+        Metadata history as a list of dictionaries
+        """
         if os.path.isfile(self.md_path):
             if lock:
                 with LockFile(self.lock_md_file):
@@ -144,13 +210,20 @@ class StorageInterface(object):
         raise NotImplementedError()
 
     def get_terms(self):
+        """
+        Extract queryable plain text terms from the object. Defaults
+        to returning metadata keys that are of str type.
+
+        Returns
+        -------
+        List of string terms
+        """
         md = self.read_metadata()
         str_md_terms = [v for k, v in md.items() if isinstance(v, str)]
         return str_md_terms
 
     @staticmethod
-    def _build_html_body_(md):
-        #md = self.read_metadata()[-1]
+    def __build_html_body_(md):
 
         html_str = """
         <b>Author</b>: {author} <br>
@@ -166,23 +239,54 @@ class StorageInterface(object):
     def _repr_html_(self):
         md = self.read_metadata()[-1]
         html_str = """<h3> {name} </h3>""".format(name=self.name)
-        html_str += StorageInterface._build_html_body_(md)
+        html_str += StorageInterface.__build_html_body_(md)
         return html_str
 
 class HDFStorageInterface(StorageInterface):
+    """
+    Pandas storage interface backed by HDF5 (PyTables) for efficient
+    storage of tabular data.
+    """
     extension = 'hdf'
     hdf_data_level = '/data'
     hdf_format = 'fixed'
 
+    @staticmethod
+    def __valid_object_for_storage(obj):
+        if isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel)):
+            return True
+        else:
+            return False
+
     def load(self):
+        """
+        Locks the object and reads the data from the filesystem
+
+        Returns
+        -------
+        Object stored
+        """
         with LockFile(self.lock_file):
-            #hdf_store = pd.HDFStore(self.path, mode='r')
-            #obj = hdf_store[HDFStorageInterface.hdf_data_level]
             obj = pd.read_hdf(self.path, mode='r')
-            #hdf_store.close()
         return obj
 
     def save(self, obj, **md_kwargs):
+        """
+        Locks the object and writes the object and metadata to the
+        filesystem.
+
+        Parameters
+        ----------
+        obj : Serializable Python object
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
+        if not self.__valid_object_for_storage(obj):
+            raise ValueError("Expected Pandas Data object, got %s" % type(obj))
+
         with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='w')
             hdf_store.put(HDFStorageInterface.hdf_data_level,
@@ -192,27 +296,62 @@ class HDFStorageInterface(StorageInterface):
         self.write_metadata(obj=obj, **md_kwargs)
 
     def sample(self, n=5):
+        """
+        [NOT A RANDOM SAMPLE] Fetch only the first N samples from
+        the dataset
+
+        Parameters
+        ----------
+        n : int
+            Number of samples to retrieve
+
+        Returns
+        -------
+        Pandas data object of the first n entries
+        """
         with LockFile(self.lock_file):
-            #hdf_store = pd.HDFStore(self.path, mode='r')
-            #obj = hdf_store[HDFStorageInterface.hdf_data_level]
             obj = pd.read_hdf(self.path, mode='r', stop=n)
-            #hdf_store.close()
         return obj
 
 
     def write_metadata(self, obj=None, **md_kwargs):
+        """
+        Locks metadata file, reads current contents, and appends
+        md_kwargs key-value pairs to the metadata.
+
+
+        Parameters
+        ----------
+        obj : object to which the metadata pertains
+            If the object is provided, then additional
+            metadata is automatically extracted:
+                - Column names (if DataFrame)
+                - First 5 index values
+                - Number of samples
+
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
+
+        if obj is not None and not self.__valid_object_for_storage(obj):
+            raise ValueError("Expected Pandas Data object, got %s" % type(obj))
+
         if isinstance(obj, pd.DataFrame):
             md_kwargs['columns'] = list(str(c) for c in obj.columns)
 
-        md_kwargs['index_head'] = list(str(i) for i in obj.index[:5])
-        md_kwargs['length'] = len(obj)
+        if obj is not None:
+            md_kwargs['index_head'] = list(str(i) for i in obj.index[:5])
+            md_kwargs['length'] = len(obj)
 
         super(HDFStorageInterface, self).write_metadata(obj=obj, **md_kwargs)
 
     def _repr_html_(self):
         md = self.read_metadata()[-1]
 
-        basic_descrip = StorageInterface._build_html_body_(md)
+        basic_descrip = StorageInterface.__build_html_body_(md)
         extra_descrip = """
         <b>Num Entries </b> : {num_entries} <br>
         <b>Columns</b> ({n_cols}) : {col_sample} <br>
@@ -259,8 +398,22 @@ storage_type_priority_order = ['hdf', 'pickle']
 # Tree -> Leaf -> Storage Types
 # All one to many
 class RepoLeaf(object):
+    """
+    A terminating node in the repo tree, providing an interface
+    to possibly several objects saved using different storage types.
+    """
+    # ABC used in order to allow doc string monkey patching
     __metaclass__ = abc.ABCMeta
+
     def __init__(self, parent_repo, name):
+        """
+        Parameters
+        ----------
+        parent_repo : RepoTree object
+            RepoTree in which this leaf resides
+        name : str
+            Name of the object
+        """
         self.parent_repo = parent_repo
         self.name = name
 
@@ -269,6 +422,15 @@ class RepoLeaf(object):
         self.__update_typed_paths()
 
     def __call__(self, *args, **kwargs):
+        """
+        Load the object stored under this name, uses
+        storage interface priority list.
+
+        Returns
+        -------
+        Stored data object
+
+        """
         return self.load(storage_type=None)
 
     def __update_doc_str(self):
@@ -329,22 +491,24 @@ class RepoLeaf(object):
 
         for st in storage_type_priority_order:
             if st in self.type_to_storage_interface_map:
-                #md = self.read_metadata(storage_type=st)[-1]
                 return self.type_to_storage_interface_map[st]._repr_html_()
 
-        #html_str = """
-        #<h3> {name} </h3>
-        #<b>Author</b>: {author} <br>
-        #<b>Last Write</b>: {ts} <br>
-        #<b>Comments</b>: {comments} <br>
-        #<b>Type</b>: {ty} <br>
-        #<b>Tags</b>: {tags} <br>
-        #""".format(name=self.name, author=md['author'],
-        #           comments=md['comments'], ts=md['write_time'],
-        #           ty=md['obj_type'], tags=md['tags'])
-        #return html_str
-
     def read_metadata(self, storage_type=None):
+        """
+        Read entire metadata history from storage. Each
+        storage interface saves it's own metadata, so
+        the interface must be specified, otherwise the
+        priority order is used.
+
+        Parameters
+        ----------
+        storage_type : str (default=None)
+            Storage interface whose metadata to read
+
+        Returns
+        -------
+        Metadata history as a list of dictionaries
+        """
         if storage_type is not None:
             if storage_type not in self.type_to_storage_interface_map:
                 raise ValueError("Type %s does not exist for %s" % (storage_type, self.name))
@@ -360,7 +524,24 @@ class RepoLeaf(object):
 
     def save(self, obj, storage_type=None, auto_overwrite=False, **md_props):
         """
-        Save Python object at this location
+        Save the object and metadata to the filesystem using a specific
+        storage interface
+
+        Parameters
+        ----------
+        obj : Python object to save
+            The python object must be compatable with the
+            selected storage_type
+        storage_type : str (default=None)
+            Storage interface type name to use
+        auto_overwrite : bool (default=False)
+            If True, user is not prompted for overwriting an existing object.
+        md_kwargs : Key-value pairs to include in the metadata entry
+            Some storage interfaces may automatically extract metadata
+
+        Returns
+        -------
+        None
         """
         # Need target save type for conflict detection and the eventual save
         if storage_type is None:
@@ -370,7 +551,7 @@ class RepoLeaf(object):
         store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
 
         # Double Check - file exists there or file is registered in memory
-        if store_int.is_file() or storage_type in self.type_to_storage_interface_map:
+        if store_int.__is_file() or storage_type in self.type_to_storage_interface_map:
             if auto_overwrite:
                 print("Auto overwriting '%s' (%s) in %s " % (self.name,
                                                              storage_type,
@@ -395,6 +576,18 @@ class RepoLeaf(object):
 
     # TODO: Move delete to storage interface, perform with lock?
     def delete(self, storage_type=None):
+        """
+        Permanently destroy the object
+
+        Parameters
+        ----------
+        storage_type : str (default=None)
+            Storage interface type name to use
+
+        Returns
+        -------
+        None
+        """
         if storage_type is None:
             filenames = glob(self.save_path + '.*')
             print("Deleting: %s" % ",".join(filenames))
@@ -408,6 +601,18 @@ class RepoLeaf(object):
         self.parent_repo.refresh()
 
     def load(self, storage_type=None):
+        """
+        Load the object from the filesystem
+
+        Parameters
+        ----------
+        storage_type : str (default=None)
+            Storage interface type to load from
+
+        Returns
+        -------
+        Stored Object
+        """
         store_int = None
         if storage_type is None:
             for po in storage_type_priority_order:
@@ -420,11 +625,16 @@ class RepoLeaf(object):
         return store_int.load()
 
 class RepoTree(object):
+    """
+    A branching node in the repo tree, containing both objects
+    and other sub-repositories.
+    """
     def __init__(self, repo_root=None, parent_repo=None):
         """
-        :param repo_root: Directory that the repo is in (parent dir)
-        :param repo_name: Name of the repo (.repo file in the parent dir)
-        :param parent_repo: Repo Tree Object representing the parent repo
+        Parameters
+        ----------
+        repo_root : Directory that the repo is in (parent dir)
+        parent_repo : Repo Tree Object representing the parent repo
         """
         if repo_root is None:
             repo_root = idr_config['storage_root_dir']
@@ -495,13 +705,23 @@ class RepoTree(object):
             raise AttributeError("'%s' is not under repo %s" % (item, dot_path))
 
     def get_root(self):
+        """
+        Returns
+        -------
+        Path (str) to the repo root (top-level repo)
+        """
         rep = self
         while rep.idr_prop['parent_repo'] is not None:
             rep = rep.idr_prop['parent_repo']
         return rep
 
     def get_parent_repo_names(self):
-        rep = self#.idr_prop['parent_repo']
+        """
+        Returns
+        -------
+        List of repo names (str) in hierarchical order
+        """
+        rep = self
         repos = list()
         while rep.idr_prop['parent_repo'] is not None:
             rep = rep.idr_prop['parent_repo']
@@ -653,26 +873,72 @@ Sub-Repositories
             if is_file:
                 # Objects leaf is created from base name - Leaf object will map to types
                 self.__repo_object_table[base_name] = RepoLeaf(parent_repo=self, name=base_name)
-                # Repos take precedent for base name matches
-                #if base_name not in self.__sub_repo_table:
-                #    setattr(self, base_name, self.__repo_object_table[base_name])
             else:
                 sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
                 self.__sub_repo_table[sub_repo_name] = RepoTree(repo_root=os.path.join(self.idr_prop['repo_root'], f),
                                                                 parent_repo=self)
-                #setattr(self, sub_repo_name, self.__sub_repo_table[sub_repo_name])
 
         self.__assign_property_tree()
         return self
 
     def refresh(self):
+        """
+        Force the tree to rebuild by rescanning the filesystem
+
+        Returns
+        -------
+        self
+        """
         self.__build_property_tree_from_file_system()
+        return self
 
     def delete(self, name, storage_type=None):
+        """
+        Permanently destroy the object
+
+        Parameters
+        ----------
+        name : str
+            Name of the object in this repo to delete
+        storage_type : str (default=None)
+            Storage interface type name to use
+
+        Returns
+        -------
+        None
+        """
         self.__repo_object_table[name].delete(storage_type=storage_type)
 
     def save(self, obj, name, author=None, comments=None, tags=None,
-             storage_type=None, **extra_kwargs):
+             auto_overwrite=False, storage_type=None, **extra_kwargs):
+        """
+        Save the object and metadata to the filesystem.
+
+        Parameters
+        ----------
+        obj : Python object to save
+            The python object must be compatable with the
+            selected storage_type
+        name : str
+            Name of the object/leaf to create. Must be a valid
+            Python name.
+        author : str (default=None)
+            Name or ID of the creator
+        comments : str (default=None)
+            Misc. comments to include in the metadata
+        tags : str (default=Non)
+            Whitespace separated tags to include in the metadata
+        auto_overwrite : bool (default=False)
+            If True, user is not prompted for overwriting an existing object.
+        storage_type : str (default=None)
+            Storage interface type name to use
+        md_kwargs : Key-value pairs to include in the metadata entry
+            Some storage interfaces may automatically extract metadata
+
+        Returns
+        -------
+        None
+        """
         if not isidentifier(name):
             raise ValueError("Name must be a valid python identifier, got '%s'" % name)
 
@@ -680,18 +946,48 @@ Sub-Repositories
 
         leaf = self.__repo_object_table.get(name, RepoLeaf(parent_repo=self, name=name))
         leaf.save(obj, storage_type=storage_type, author=author,
-                  comments=comments, tags=tags, **extra_kwargs)
+                  auto_overwrite=auto_overwrite, comments=comments, tags=tags,
+                  **extra_kwargs)
 
         self.__repo_object_table[name] = leaf
         self.__assign_property_tree()
 
-    def load(self, name):
+    def load(self, name, storage_type=None):
+       """
+        Load the object from the filesystem
+
+        Parameters
+        ----------
+        name : str
+            Name of the object to load
+        storage_type : str (default=None)
+            Storage interface type to load from
+
+        Returns
+        -------
+        Stored Object
+        """
         if name not in self.__repo_object_table:
             raise ValueError("Unknown object %s in repo %s" % (name, self.name))
 
         return self.__repo_object_table[name].load()
 
     def mkrepo(self, name, err_on_exists=False):
+        """
+        Create a new repo off this tree
+
+        Parameters
+        ----------
+        name : str
+            Name of the repository. Must be a valid python name
+        err_on_exists : bool (default=False)
+            If True, raise and exception if the repository
+            already exists
+
+        Returns
+        -------
+        RepoTree object representing the new repository
+        """
         if not isidentifier(name):
             raise ValueError("Name must be a valid python identifier, got '%s'" % name)
 
@@ -708,6 +1004,22 @@ Sub-Repositories
         return self.__sub_repo_table[name]
 
     def list(self, list_repos=True, list_objs=True, verbose=False):
+        """
+        List items inside a repository
+
+        Parameters
+        ----------
+        list_repos : bool (default=True)
+            Include repositories in the listing
+        list_objs : bool (default=True)
+            Include objects in the listing
+        verbose : bool (default=False)
+            Unused
+
+        Returns
+        -------
+        List of strings
+        """
 
         objs = list(sorted(self.__repo_object_table.keys()))
         repos = list(sorted(self.__sub_repo_table.keys()))
@@ -722,6 +1034,9 @@ Sub-Repositories
             raise ValueError("List repos and list objs set to False - nothing to do")
 
     def summary(self):
+        """
+        Print basic plaintext summary of the repository
+        """
         repos, objs = self.list()
         print("---Repos---")
         print("\n".join(repos))
