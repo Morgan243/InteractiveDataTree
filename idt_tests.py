@@ -177,6 +177,19 @@ class InteractiveDataRepo(unittest.TestCase):
         with self.assertRaises(KeyError):
             t = lvl1['not_there']
 
+    def test_html_repr(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        lvl1 = rt.mkrepo('lvl1')
+        df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
+        lvl1.save(df, 'test_df',
+                  storage_type='hdf')
+        lvl1.save('not a df', 'test_str',
+                  storage_type='pickle')
+
+        lvl1._repr_html_()
+        lvl1.test_df._repr_html_()
+        lvl1.test_str._repr_html_()
+
     def test_name_collisions(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -196,6 +209,18 @@ class InteractiveDataRepo(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             rt.save('some obj', 'invalid id')
+
+    def test_queryable_extractions(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.save('str object', name='some_data',
+                comments='something to search for')
+        with self.assertRaises(NotImplementedError):
+            rt.some_data.pickle.get_vector_representation()
+
+        terms = rt.some_data.pickle.get_terms()
+        self.assertIn('str', terms)
+        self.assertIn('something to search for', terms)
+
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
