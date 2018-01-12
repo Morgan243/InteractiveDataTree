@@ -115,7 +115,7 @@ class StorageInterface(object):
         self.md_path = self.path + '.' + idr_config['metadata_extension']
         self.lock_md_file = self.md_path + '.' + idr_config['lock_extension']
 
-    def __is_file(self):
+    def exists(self):
         return os.path.isfile(self.path)
 
     def load(self):
@@ -218,12 +218,12 @@ class StorageInterface(object):
         -------
         List of string terms
         """
-        md = self.read_metadata()
+        md = self.read_metadata()[-1]
         str_md_terms = [v for k, v in md.items() if isinstance(v, str)]
         return str_md_terms
 
     @staticmethod
-    def __build_html_body_(md):
+    def _build_html_body_(md):
 
         html_str = """
         <b>Author</b>: {author} <br>
@@ -239,7 +239,7 @@ class StorageInterface(object):
     def _repr_html_(self):
         md = self.read_metadata()[-1]
         html_str = """<h3> {name} </h3>""".format(name=self.name)
-        html_str += StorageInterface.__build_html_body_(md)
+        html_str += StorageInterface._build_html_body_(md)
         return html_str
 
 class HDFStorageInterface(StorageInterface):
@@ -351,7 +351,7 @@ class HDFStorageInterface(StorageInterface):
     def _repr_html_(self):
         md = self.read_metadata()[-1]
 
-        basic_descrip = StorageInterface.__build_html_body_(md)
+        basic_descrip = StorageInterface._build_html_body_(md)
         extra_descrip = """
         <b>Num Entries </b> : {num_entries} <br>
         <b>Columns</b> ({n_cols}) : {col_sample} <br>
@@ -551,7 +551,7 @@ class RepoLeaf(object):
         store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
 
         # Double Check - file exists there or file is registered in memory
-        if store_int.__is_file() or storage_type in self.type_to_storage_interface_map:
+        if store_int.exists() or storage_type in self.type_to_storage_interface_map:
             if auto_overwrite:
                 print("Auto overwriting '%s' (%s) in %s " % (self.name,
                                                              storage_type,
@@ -953,7 +953,7 @@ Sub-Repositories
         self.__assign_property_tree()
 
     def load(self, name, storage_type=None):
-       """
+        """
         Load the object from the filesystem
 
         Parameters
