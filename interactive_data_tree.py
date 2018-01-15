@@ -12,6 +12,10 @@ import sys
 
 
 IS_PYTHON3 = sys.version_info > (3, 0)
+try:
+  basestring
+except NameError:
+  basestring = str
 
 if IS_PYTHON3:
     fs_except = FileExistsError
@@ -219,7 +223,7 @@ class StorageInterface(object):
         List of string terms
         """
         md = self.read_metadata()[-1]
-        str_md_terms = [v for k, v in md.items() if isinstance(v, str)]
+        str_md_terms = [v for k, v in md.items() if isinstance(v, basestring)]
         return str_md_terms
 
     @staticmethod
