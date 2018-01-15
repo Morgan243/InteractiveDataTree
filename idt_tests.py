@@ -43,7 +43,7 @@ class InteractiveDataRepo(unittest.TestCase):
 
         self.assertTrue(hasattr(rep_tree, 'test_string'))
         repos, objs = rep_tree.list()
-        self.assertEqual(['test_string'], objs)
+        self.assertEqual(['LOG', 'test_string'], objs)
 
         self.assertEqual(t_obj, rep_tree.load('test_string'))
         self.assertEqual(t_obj, rep_tree.test_string.load(storage_type='pickle'))
@@ -70,10 +70,13 @@ class InteractiveDataRepo(unittest.TestCase):
         # Add another obj to test that a deletion hits only the target object
         t_obj = 'some string2'
         rep_tree.save(t_obj, 'test_string_num_2')
-        rep_tree.test_string.delete()
+        rep_tree.test_string.delete(author='unittests')
         self.assertTrue(not hasattr(rep_tree, 'test_string'))
         self.assertTrue(hasattr(rep_tree, 'test_string_num_2'))
         rep_tree.test_string_num_2.load()
+
+        rep_tree.delete(author='unittests', name='test_string_num_2')
+        self.assertTrue(not hasattr(rep_tree, 'test_string_num_2'))
 
     def test_load_exceptions(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -108,6 +111,14 @@ class InteractiveDataRepo(unittest.TestCase):
         ld_s = lvl1.test_series.load()
         pd.util.testing.assert_series_equal(df.a, ld_s)
 
+    def test_pandas_sample(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
+        lvl1 = rt.mkrepo('lvl1')
+        lvl1.save(df, name='test_df')
+        s_df = lvl1.test_df.hdf.sample(n=5)
+        pd.util.testing.assert_frame_equal(df.head(5), s_df)
+
     def test_multiplex_storage(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -124,7 +135,7 @@ class InteractiveDataRepo(unittest.TestCase):
         ld_s = lvl1.test_series.load()
         pd.util.testing.assert_series_equal(df.a, ld_s)
 
-        lvl1.test_df.delete(storage_type='hdf')
+        lvl1.test_df.delete(author='unittests', storage_type='hdf')
         self.assertEqual('not a df', lvl1.test_df.load())
 
     def test_attribute_axis_race(self):
@@ -137,6 +148,7 @@ class InteractiveDataRepo(unittest.TestCase):
         tmp_path = os.path.join(rt.idr_prop['repo_root'], 'test_str.pkl')
         pickle.dump(t_str, open(tmp_path, 'wb'))
 
+        self.assertTrue(hasattr(rt, 'test_str'))
         self.assertEqual(t_str, rt.test_str.load())
 
     def test_parent_repo_listing(self):
@@ -220,6 +232,20 @@ class InteractiveDataRepo(unittest.TestCase):
         terms = rt.some_data.pickle.get_terms()
         self.assertIn('str', terms)
         self.assertIn('something to search for', terms)
+
+    def test_ipython_features(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.save('str object', name='some_data',
+                comments='something to search for')
+
+        lvl1 = rt.mkrepo('lvl1')
+        rt.save('some string data', name='foobar')
+
+        comps = rt._ipython_key_completions_()
+        self.assertIn('lvl1', comps)
+        self.assertIn('foobar', comps)
+        self.assertIn('some_data', comps)
+        self.assertEqual(len(comps), 4)
 
 
 # TODO:

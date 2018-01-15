@@ -572,10 +572,15 @@ class RepoLeaf(object):
         store_int.save(obj, **md_props)
         print("Save Complete")
 
+
+        self.parent_repo._append_to_master_log(operation='save', leaf=self,
+                                               author=md_props.get('author', None),
+                                               storage_type=storage_type)
+
         self.__update_typed_paths()
 
     # TODO: Move delete to storage interface, perform with lock?
-    def delete(self, storage_type=None):
+    def delete(self, author, storage_type=None):
         """
         Permanently destroy the object
 
@@ -598,6 +603,11 @@ class RepoLeaf(object):
             os.remove(p)
             os.remove(md_p)
         self.__update_typed_paths()
+        #self.parent_repo.refresh()
+
+        self.parent_repo._append_to_master_log(operation='delete', leaf=self,
+                                               author=author,
+                                               storage_type=storage_type)
         self.parent_repo.refresh()
 
     def load(self, storage_type=None):
@@ -621,6 +631,7 @@ class RepoLeaf(object):
                     break
         else:
             store_int = self.type_to_storage_interface_map[storage_type]
+
 
         return store_int.load()
 
@@ -654,7 +665,8 @@ class RepoTree(object):
         self.__repo_object_table = dict()
         self.__sub_repo_table = dict()
 
-        self.__build_property_tree_from_file_system()
+        #self.__build_property_tree_from_file_system()
+        #self.refresh()
 
     def __getitem__(self, item):
         in_repos = item in self.__sub_repo_table
@@ -693,7 +705,10 @@ class RepoTree(object):
         # Only called if an unknown attribute is accessed
         # - if so, then check that the object wasn't created by another instance
         # i.e. rescan repo before throwing an error
-        self.__build_property_tree_from_file_system()
+        #self.__build_property_tree_from_file_system()
+        #self.refresh()
+        if item not in self.__repo_object_table and item not in self.__sub_repo_table:
+            self.refresh()
 
         if item in self.__repo_object_table:
             return self.__repo_object_table[item]
@@ -737,7 +752,7 @@ class RepoTree(object):
             print("Log doesn't exist yet, creating it at %s.%s" % (self.name, log_name) )
             root_repo.save([], name=log_name, author='system',
                            comments='log of events across entire tree',
-                           tags='log')
+                           tags='idt_log')
 
         return root_repo.load(name=log_name)
 
@@ -752,16 +767,20 @@ class RepoTree(object):
     def _append_to_master_log(self, operation,
                               leaf=None, storage_type=None,
                               author=None):
+        if leaf is not None:
+            if leaf.name == idr_config['master_log']:
+                return
+
         log_data = self._load_master_log()
 
         entry = dict(base_master_log_entry)
         entry['repo_tree'] = self.get_parent_repo_names() + [self.name]
         entry['repo_leaf'] = None if leaf is None else leaf.name
-        entry['storage_type'] = None if storage_type is None else storage_type.extension
+        entry['storage_type'] = storage_type
         entry['repo_operation'] = operation
         entry['timestamp'] = datetime.now()
-        nbp = os.path.join(os.getcwd(), shared_metadata['notebook_name'])
-        entry['notebook_path'] = nbp
+        entry['cwd'] = os.getcwd()
+        entry['nb_name'] = shared_metadata.get('notebook_name')
         entry['author'] = author if author is not None else shared_metadata.get('author')
 
         log_data.append(entry)
@@ -855,8 +874,6 @@ Sub-Repositories
         self.__update_doc_str()
 
     def __build_property_tree_from_file_system(self):
-        self.__clear_property_tree(clear_internal_tables=True)
-
         all_dir_items = os.listdir(self.idr_prop['repo_root'])
 
         ### Separate out objects stored in this repo from sub-repos
@@ -872,13 +889,12 @@ Sub-Repositories
             # Primary distinction - Repo (dir) vs. Obj (file)
             if is_file:
                 # Objects leaf is created from base name - Leaf object will map to types
-                self.__repo_object_table[base_name] = RepoLeaf(parent_repo=self, name=base_name)
+                self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
             else:
                 sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
-                self.__sub_repo_table[sub_repo_name] = RepoTree(repo_root=os.path.join(self.idr_prop['repo_root'], f),
-                                                                parent_repo=self)
+                p = os.path.join(self.idr_prop['repo_root'], f)
+                self.add_repo_leaf(RepoTree(repo_root=p, parent_repo=self))
 
-        self.__assign_property_tree()
         return self
 
     def refresh(self):
@@ -889,10 +905,11 @@ Sub-Repositories
         -------
         self
         """
+        self.__clear_property_tree(clear_internal_tables=True)
         self.__build_property_tree_from_file_system()
         return self
 
-    def delete(self, name, storage_type=None):
+    def delete(self, name, author, storage_type=None):
         """
         Permanently destroy the object
 
@@ -907,7 +924,21 @@ Sub-Repositories
         -------
         None
         """
-        self.__repo_object_table[name].delete(storage_type=storage_type)
+        self.__repo_object_table[name].delete(author=author, storage_type=storage_type)
+        if hasattr(self, name):
+            delattr(self, name)
+
+    def add_obj_leaf(self, leaf):
+        self.__repo_object_table[leaf.name] = leaf
+
+        repo_coll = hasattr(self, leaf.name) and isinstance(getattr(self, leaf.name), RepoTree)
+
+        if not repo_coll:
+            setattr(self, leaf.name, leaf)
+
+    def add_repo_tree(self, tree):
+        self.__sub_repo_table[tree.name] = tree
+        setattr(self, tree.name, tree)
 
     def save(self, obj, name, author=None, comments=None, tags=None,
              auto_overwrite=False, storage_type=None, **extra_kwargs):
@@ -942,15 +973,12 @@ Sub-Repositories
         if not isidentifier(name):
             raise ValueError("Name must be a valid python identifier, got '%s'" % name)
 
-        self.__clear_property_tree()
-
         leaf = self.__repo_object_table.get(name, RepoLeaf(parent_repo=self, name=name))
         leaf.save(obj, storage_type=storage_type, author=author,
                   auto_overwrite=auto_overwrite, comments=comments, tags=tags,
                   **extra_kwargs)
 
-        self.__repo_object_table[name] = leaf
-        self.__assign_property_tree()
+        self.add_obj_leaf(leaf)
 
     def load(self, name, storage_type=None):
         """
@@ -991,16 +1019,21 @@ Sub-Repositories
         if not isidentifier(name):
             raise ValueError("Name must be a valid python identifier, got '%s'" % name)
 
+
         repo_root = os.path.join(self.idr_prop['repo_root'], name)
 
         if name in self.__sub_repo_table:
             if err_on_exists:
                 raise ValueError("Repo %s already exists" % repo_root)
         else:
-            self.__clear_property_tree()
-            self.__sub_repo_table[name] = RepoTree(repo_root=repo_root,
-                                                   parent_repo=self)
-            self.__assign_property_tree()
+            self.add_repo_tree(RepoTree(repo_root=repo_root, parent_repo=self))
+            #self.__clear_property_tree()
+            #self.__sub_repo_table[name] = RepoTree(repo_root=repo_root,
+            #                                       parent_repo=self)
+            #self.__assign_property_tree()
+
+        self._append_to_master_log(operation='mkrepo')
+
         return self.__sub_repo_table[name]
 
     def list(self, list_repos=True, list_objs=True, verbose=False):
