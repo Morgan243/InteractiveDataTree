@@ -1,6 +1,5 @@
 
-.. image:: https://travis-ci.org/Morgan243/InteractiveDataTree.svg?branch=master
-   :target: https://travis-ci.org/Morgan243/InteractiveDataTree
+[![Build Status](https://travis-ci.org/Morgan243/InteractiveDataTree.svg?branch=master)](https://travis-ci.org/Morgan243/InteractiveDataTree)
 
 ### What is it
 DataTree implements simple file-system-based storage of Python objects
