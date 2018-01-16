@@ -43,7 +43,7 @@ class InteractiveDataRepo(unittest.TestCase):
 
         self.assertTrue(hasattr(rep_tree, 'test_string'))
         repos, objs = rep_tree.list()
-        self.assertEqual(['LOG', 'test_string'], objs)
+        self.assertEqual(['INDEX', 'LOG', 'test_string'], objs)
 
         self.assertEqual(t_obj, rep_tree.load('test_string'))
         self.assertEqual(t_obj, rep_tree.test_string.load(storage_type='pickle'))
@@ -252,7 +252,7 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertIn('lvl1', comps)
         self.assertIn('foobar', comps)
         self.assertIn('some_data', comps)
-        self.assertEqual(len(comps), 4)
+        self.assertEqual(len(comps), 5)
 
     def test_unsupported_object_exceptions(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)

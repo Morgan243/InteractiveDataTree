@@ -832,7 +832,7 @@ Sub-Repositories
                               author=None):
         # Don't need to index the LOG itself
         if leaf is not None:
-            if leaf.name == idr_config['master_log']:
+            if leaf.name in (idr_config['master_log'], idr_config['master_index']):
                 return
 
         log_data = self._load_master_log()
@@ -904,12 +904,15 @@ Sub-Repositories
                            tags='idt_index')
         return root_repo.load(name=ix_name, storage_type='pickle')
 
-
     def _add_to_index(self, leaf):
+        # Avoid indexing the index
+        if leaf.name in (idr_config['master_log'], idr_config['master_index']):
+            return
+
         # Open index object in root tree
         #   - Each type has its own index, so use storage type to distinguish
         vec_map = leaf.get_vector_representation_map()
-        #master_index = self._get_index()
+        master_index = self._get_index()
 
     def query(self, q_str, storage_type=None):
         pass
