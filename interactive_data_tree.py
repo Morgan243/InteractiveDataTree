@@ -419,8 +419,7 @@ class RepoLeaf(object):
         self.name = name
 
         self.save_path = os.path.join(self.parent_repo.idr_prop['repo_root'], self.name)
-        self.type_to_storage_interface_map = dict()
-        self.__update_typed_paths()
+        self.refresh()
 
     def __call__(self, *args, **kwargs):
         """
@@ -466,7 +465,9 @@ class RepoLeaf(object):
     def __update_typed_paths(self):
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
-        cur_types = set(self.type_to_storage_interface_map.keys())
+
+        cur_si_map = dict(self.type_to_storage_interface_map)
+        cur_types = set(cur_si_map.keys())
 
         self.tmp = {os.path.split(p)[-1].split('.')[-1]: p
                                               for p in glob(self.save_path + '*')
@@ -481,12 +482,25 @@ class RepoLeaf(object):
         # Delete types that are no longer present on the FS
         next_types = set(self.type_to_storage_interface_map.keys())
         for t in (cur_types - next_types):
+            si = cur_si_map[t]
             delattr(self, t)
 
+            if hasattr(si, 'sample') and callable(getattr(si, 'sample')):
+                if hasattr(self, 'sample') and self.sample == si.sample:
+                   delattr(self, 'sample')
+
         for t in next_types:
-            setattr(self, t, self.type_to_storage_interface_map[t])
+            si = self.type_to_storage_interface_map[t]
+            setattr(self, t, si)
+
+            if hasattr(si, 'sample') and callable(getattr(si, 'sample')):
+                setattr(self, 'sample', si.sample)
 
         self.__update_doc_str()
+
+    def refresh(self):
+        self.type_to_storage_interface_map = dict()
+        self.__update_typed_paths()
 
     def _repr_html_(self):
 
