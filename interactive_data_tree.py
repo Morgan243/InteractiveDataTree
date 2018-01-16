@@ -868,14 +868,6 @@ Sub-Repositories
             self.__repo_object_table = dict()
             self.__sub_repo_table = dict()
 
-    def __assign_property_tree(self):
-        for base_name, rl in self.__repo_object_table.items():
-            setattr(self, base_name, rl)
-
-        for repo_name, rt in self.__sub_repo_table.items():
-            setattr(self, repo_name, rt)
-
-        self.__update_doc_str()
 
     def __build_property_tree_from_file_system(self):
         all_dir_items = os.listdir(self.idr_prop['repo_root'])
@@ -929,7 +921,7 @@ Sub-Repositories
         None
         """
         self.__repo_object_table[name].delete(author=author, storage_type=storage_type)
-        if hasattr(self, name):
+        if hasattr(self, name) and isinstance(getattr(self, name), RepoLeaf):
             delattr(self, name)
 
     def add_obj_leaf(self, leaf):
