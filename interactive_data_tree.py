@@ -33,10 +33,11 @@ def isidentifier(name):
 
 
 idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
-                  master_log='LOG',
+                  master_log='LOG', master_index='INDEX',
                   repo_extension='repo', metadata_extension='mdjson',
                   lock_extension='lock',
-                  date_format='%h %d %Y (%I:%M:%S %p)')
+                  date_format='%h %d %Y (%I:%M:%S %p)',
+                  enable_queries=True)
 
 shared_metadata = dict(notebook_name=None, author=None, project=None)
 base_master_log_entry = dict(repo_tree=None,
@@ -63,6 +64,15 @@ def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
 
     js = """IPython.notebook.kernel.execute('%s = ' + '"' + IPython.notebook.notebook_name + '"')""" % var_name
     ipython.run_cell_magic('javascript', '', js)
+
+def basic_tokenizer(str_data, ngram_range=(1, 1)):
+    ngrams = list(range(ngram_range[0], ngram_range[1] + 1))
+    tokens = [s.lower() for s in str_data.split()]
+    final_tokens = list()
+    for n in ngrams:
+        final_tokens += [" ".join(tokens[i:i+n])
+                         for i in range(0, len(tokens), n)]
+    return final_tokens
 
 class LockFile(object):
     """
@@ -209,13 +219,10 @@ class StorageInterface(object):
         return md
 
     def get_vector_representation(self):
-        termset = ['str', 'dataframe', 'series', 'query', 'data']
-        term_cnts = {n:0 for n in termset}
+        term_cnts = dict()
         terms = self.get_terms()
-
         for t in terms:
             term_cnts[t] = term_cnts.get(t, 0) + 1
-
         return term_cnts
 
     def get_terms(self):
@@ -228,7 +235,9 @@ class StorageInterface(object):
         List of string terms
         """
         md = self.read_metadata()[-1]
-        str_md_terms = [v for k, v in md.items() if isinstance(v, basestring)]
+        str_md_terms = [basic_tokenizer(v) for k, v in md.items()
+                        if isinstance(v, basestring)]
+        str_md_terms = [_v for v in str_md_terms for _v in v]
         return str_md_terms
 
     @staticmethod
@@ -600,6 +609,7 @@ class RepoLeaf(object):
         self.parent_repo._append_to_master_log(operation='save', leaf=self,
                                                author=md_props.get('author', None),
                                                storage_type=storage_type)
+        self.parent_repo._add_to_index(leaf=self)
 
         self.__update_typed_paths()
 
@@ -820,6 +830,7 @@ Sub-Repositories
     def _append_to_master_log(self, operation,
                               leaf=None, storage_type=None,
                               author=None):
+        # Don't need to index the LOG itself
         if leaf is not None:
             if leaf.name == idr_config['master_log']:
                 return
@@ -875,6 +886,33 @@ Sub-Repositories
                    repos_list=repos_html, objs_list=objects_html)
 
         return html
+
+    def _remove_from_index(self, leaf):
+        pass
+
+    def _get_index(self):
+        # Open index object in root tree
+        #   - Each type has its own index, so use storage type to distinguish
+        root_repo = self.get_root()
+        ix_name = idr_config['master_index']
+        ix_exists = ix_name in root_repo.list(list_repos=False)
+        if not ix_exists:
+            print("Master index doesn't exists yet, creating it at %s.%s"
+                  % (self.name, ix_name))
+            root_repo.save(dict(), name=ix_name, author='system',
+                           comments='index of objects across entire tree',
+                           tags='idt_index')
+        return root_repo.load(name=ix_name, storage_type='pickle')
+
+
+    def _add_to_index(self, leaf):
+        # Open index object in root tree
+        #   - Each type has its own index, so use storage type to distinguish
+        vec_map = leaf.get_vector_representation_map()
+        #master_index = self._get_index()
+
+    def query(self, q_str, storage_type=None):
+        pass
 
     def get_root(self):
         """
