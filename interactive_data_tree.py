@@ -257,10 +257,7 @@ class HDFStorageInterface(StorageInterface):
 
     @staticmethod
     def __valid_object_for_storage(obj):
-        if isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel)):
-            return True
-        else:
-            return False
+        return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
 
     def load(self):
         """
@@ -668,6 +665,8 @@ class RepoTree(object):
         self.name = self.idr_prop['repo_name']
         self.__repo_object_table = dict()
         self.__sub_repo_table = dict()
+        # Hack?
+        self.__in_refresh = False
 
         #self.__build_property_tree_from_file_system()
         #self.refresh()
@@ -689,29 +688,17 @@ class RepoTree(object):
 
     def __setitem__(self, key, value):
         raise NotImplementedError("How this should behave is not quite clear yet :/")
-        in_repos = key in self.__sub_repo_table
-        in_objs = key in self.__repo_object_table
-
-        if in_objs and in_repos:
-            raise ValueError("Somehow this item is in both obj and repos!?>")
-        elif in_repos:
-            if isinstance(value, RepoTree):
-                self.__sub_repo_table[key] = value
-            elif isinstance(value, RepoLeaf):
-                pass
-        elif in_objs:
-            return self.__repo_object_table[key]
-        else:
-            raise KeyError("%s is not in the tree" % str(key))
 
     def __getattr__(self, item):
 
         # Only called if an unknown attribute is accessed
         # - if so, then check that the object wasn't created by another instance
         # i.e. rescan repo before throwing an error
-        #self.__build_property_tree_from_file_system()
-        #self.refresh()
-        if item not in self.__repo_object_table and item not in self.__sub_repo_table:
+
+        # Refresh if we have to and we aren't already refreshing! (Recursive block for this func without additional args)
+        do_refresh = item not in self.__repo_object_table and item not in self.__sub_repo_table
+
+        if do_refresh:
             self.refresh()
 
         if item in self.__repo_object_table:
@@ -868,7 +855,6 @@ Sub-Repositories
             self.__repo_object_table = dict()
             self.__sub_repo_table = dict()
 
-
     def __build_property_tree_from_file_system(self):
         all_dir_items = os.listdir(self.idr_prop['repo_root'])
 
@@ -901,8 +887,38 @@ Sub-Repositories
         -------
         self
         """
-        self.__clear_property_tree(clear_internal_tables=True)
-        self.__build_property_tree_from_file_system()
+        repo_curr = dict(self.__sub_repo_table)
+        obj_curr = dict(self.__repo_object_table)
+        self.__sub_repo_table = dict()
+        self.__repo_object_table = dict()
+
+        all_dir_items = os.listdir(self.idr_prop['repo_root'])
+        matching_items = [f for f in all_dir_items
+                          if '.' in f
+                          and f[-len(idr_config['metadata_extension']):] != idr_config['metadata_extension']]
+
+        for f in matching_items:
+            base_name, ext = f.split('.')
+            is_file = os.path.isfile(os.path.join(self.idr_prop['repo_root'], f))
+            if is_file:
+                # Had the object before - don't create new Leaf
+                if base_name in obj_curr:
+                    self.add_obj_leaf(obj_curr[base_name])
+                else:
+                    self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
+            else:
+                if base_name in repo_curr:
+                    self.add_repo_tree(repo_curr[base_name])
+                else:
+                    p = os.path.join(self.idr_prop['repo_root'], f)
+                    self.add_repo_tree(RepoTree(repo_root=p, parent_repo=self))
+
+
+        curr_names = set(list(obj_curr.keys()) + list(repo_curr.keys()))
+        new_names = set(list(self.__repo_object_table.keys()) + list(self.__repo_object_table.keys()))
+        for n in curr_names - new_names:
+            delattr(self, n)
+
         return self
 
     def delete(self, name, author, storage_type=None):
@@ -927,7 +943,8 @@ Sub-Repositories
     def add_obj_leaf(self, leaf):
         self.__repo_object_table[leaf.name] = leaf
 
-        repo_coll = hasattr(self, leaf.name) and isinstance(getattr(self, leaf.name), RepoTree)
+        #repo_coll = hasattr(self, leaf.name) and isinstance(getattr(self, leaf.name), RepoTree)
+        repo_coll = leaf.name in self.__sub_repo_table
 
         if not repo_coll:
             setattr(self, leaf.name, leaf)

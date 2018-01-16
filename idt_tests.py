@@ -151,6 +151,10 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertTrue(hasattr(rt, 'test_str'))
         self.assertEqual(t_str, rt.test_str.load())
 
+        tmp_path = os.path.join(rt.idr_prop['repo_root'], 'test_repo.repo')
+        os.mkdir(tmp_path)
+        self.assertTrue(hasattr(rt, 'test_repo'))
+
     def test_parent_repo_listing(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl4 = rt.mkrepo('lvl1').mkrepo('lvl2').mkrepo('lvl3').mkrepo('lvl4')
@@ -247,6 +251,15 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertIn('some_data', comps)
         self.assertEqual(len(comps), 4)
 
+    def test_unsupported_object_exceptions(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        with self.assertRaises(ValueError):
+            rt.save('not a dataframe',
+                    name='foobar', storage_type='hdf')
+
+        with self.assertRaises(pickle.PicklingError):
+            rt.save(lambda x: x*5,
+                    name='foobar_lambda', storage_type='pickle')
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

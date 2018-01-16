@@ -1,7 +1,6 @@
+# DataTree
 
-[![Build Status](https://travis-ci.org/Morgan243/InteractiveDataTree.svg?branch=master)](https://travis-ci.org/Morgan243/InteractiveDataTree)
-
-[![Coverage Status](https://coveralls.io/repos/github/Morgan243/InteractiveDataTree/badge.svg)](https://coveralls.io/github/Morgan243/InteractiveDataTree)
+[![Build Status](https://travis-ci.org/Morgan243/InteractiveDataTree.svg?branch=master)](https://travis-ci.org/Morgan243/InteractiveDataTree) [![Coverage Status](https://coveralls.io/repos/github/Morgan243/InteractiveDataTree/badge.svg)](https://coveralls.io/github/Morgan243/InteractiveDataTree)
 
 ### What is it
 DataTree implements a simple file-system-based storage of Python objects
