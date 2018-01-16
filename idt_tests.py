@@ -230,12 +230,14 @@ class InteractiveDataRepo(unittest.TestCase):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.save('str object', name='some_data',
                 comments='something to search for')
-        with self.assertRaises(NotImplementedError):
-            rt.some_data.pickle.get_vector_representation()
 
         terms = rt.some_data.pickle.get_terms()
         self.assertIn('str', terms)
         self.assertIn('something to search for', terms)
+
+        vec_dict = rt.some_data.pickle.get_vector_representation()
+
+        self.assertIsInstance(vec_dict, dict)
 
     def test_ipython_features(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)

@@ -209,7 +209,14 @@ class StorageInterface(object):
         return md
 
     def get_vector_representation(self):
-        raise NotImplementedError()
+        termset = ['str', 'dataframe', 'series', 'query', 'data']
+        term_cnts = {n:0 for n in termset}
+        terms = self.get_terms()
+
+        for t in terms:
+            term_cnts[t] = term_cnts.get(t, 0) + 1
+
+        return term_cnts
 
     def get_terms(self):
         """
@@ -496,15 +503,19 @@ class RepoLeaf(object):
 
         self.__update_doc_str()
 
-    def refresh(self):
-        self.type_to_storage_interface_map = dict()
-        self.__update_typed_paths()
-
     def _repr_html_(self):
 
         for st in storage_type_priority_order:
             if st in self.type_to_storage_interface_map:
                 return self.type_to_storage_interface_map[st]._repr_html_()
+
+    def get_vector_representation_map(self):
+        return {ty:si.get_vector_representation()
+                for ty, si in self.type_to_storage_interface_map.items()}
+
+    def refresh(self):
+        self.type_to_storage_interface_map = dict()
+        self.__update_typed_paths()
 
     def read_metadata(self, storage_type=None):
         """
@@ -721,30 +732,70 @@ class RepoTree(object):
             dot_path = "root" if len(dot_path) == 0 else dot_path
             raise AttributeError("'%s' is not under repo %s" % (item, dot_path))
 
-    def get_root(self):
-        """
-        Returns
-        -------
-        Path (str) to the repo root (top-level repo)
-        """
-        rep = self
-        while rep.idr_prop['parent_repo'] is not None:
-            rep = rep.idr_prop['parent_repo']
-        return rep
+    def __update_doc_str(self):
+        docs = "Repository Name: " + self.name + "\n\n"
 
-    def get_parent_repo_names(self):
-        """
-        Returns
-        -------
-        List of repo names (str) in hierarchical order
-        """
-        rep = self
-        repos = list()
-        while rep.idr_prop['parent_repo'] is not None:
-            rep = rep.idr_prop['parent_repo']
-            repos.append(rep.name)
+        sub_repos = list(self.__sub_repo_table.keys())
+        repo_objs = list(self.__repo_object_table.keys())
 
-        return list(reversed(repos))
+        if len(sub_repos) > 0:
+            sr_str = "\n".join("%s (%d)" % (sr_name, len(sr.list()))
+                                for sr_name, sr in self.__sub_repo_table.items())
+        else:
+            sr_str = "No sub-repositories"
+
+        if len(repo_objs) > 0:
+            ro_str = "\n".join("%s [%s]" % (ro_name, ", ".join(ro.type_to_storage_interface_map))
+                               for ro_name, ro in self.__repo_object_table.items())
+        else:
+            ro_str = "No objects stored"
+
+        d_str = """Objects in Repo
+----------------
+{ro}
+
+Sub-Repositories
+----------------
+{sr}\n\n""".format(ro=ro_str, sr=sr_str)
+
+        self.__doc__ = docs + d_str
+
+    def __clear_property_tree(self, clear_internal_tables=False):
+        for base_name, rl in self.__repo_object_table.items():
+            if hasattr(self, base_name):
+                delattr(self, base_name)
+
+        for repo_name, rt in self.__sub_repo_table.items():
+            if hasattr(self, repo_name):
+                delattr(self, repo_name)
+
+        if clear_internal_tables:
+            self.__repo_object_table = dict()
+            self.__sub_repo_table = dict()
+
+    def __build_property_tree_from_file_system(self):
+        all_dir_items = os.listdir(self.idr_prop['repo_root'])
+
+        ### Separate out objects stored in this repo from sub-repos
+        for f in all_dir_items:
+            # Build listing of all base file names (no extension)
+            dot_split = f.split('.')
+            if not isidentifier(dot_split[0]):
+                raise ValueError("File/dir name '%s' is not a valid identifier" % dot_split[0])
+
+            base_name = dot_split[0]
+            is_file = os.path.isfile(os.path.join(self.idr_prop['repo_root'], f))
+
+            # Primary distinction - Repo (dir) vs. Obj (file)
+            if is_file:
+                # Objects leaf is created from base name - Leaf object will map to types
+                self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
+            else:
+                sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
+                p = os.path.join(self.idr_prop['repo_root'], f)
+                self.add_repo_leaf(RepoTree(repo_root=p, parent_repo=self))
+
+        return self
 
     def _load_master_log(self):
         root_repo = self.get_root()
@@ -825,70 +876,42 @@ class RepoTree(object):
 
         return html
 
-    def __update_doc_str(self):
-        docs = "Repository Name: " + self.name + "\n\n"
+    def get_root(self):
+        """
+        Returns
+        -------
+        Path (str) to the repo root (top-level repo)
+        """
+        rep = self
+        while rep.idr_prop['parent_repo'] is not None:
+            rep = rep.idr_prop['parent_repo']
+        return rep
 
-        sub_repos = list(self.__sub_repo_table.keys())
-        repo_objs = list(self.__repo_object_table.keys())
+    def build_query_indices(self):
+        parent_str = ".".join(self.get_parent_repo_names()) + '.' + self.name
+        index_dict = dict()
+        for name, leaf in self.__repo_object_table.items():
+            k = parent_str + '.' + leaf.name
+            index_dict[k] = leaf.get_vector_representation_map()
 
-        if len(sub_repos) > 0:
-            sr_str = "\n".join("%s (%d)" % (sr_name, len(sr.list()))
-                                for sr_name, sr in self.__sub_repo_table.items())
-        else:
-            sr_str = "No sub-repositories"
+        for name, tree in self.__sub_repo_table.items():
+            index_dict.update(tree.build_query_indices())
 
-        if len(repo_objs) > 0:
-            ro_str = "\n".join("%s [%s]" % (ro_name, ", ".join(ro.type_to_storage_interface_map))
-                               for ro_name, ro in self.__repo_object_table.items())
-        else:
-            ro_str = "No objects stored"
+        return index_dict
 
-        d_str = """Objects in Repo
-----------------
-{ro}
+    def get_parent_repo_names(self):
+        """
+        Returns
+        -------
+        List of repo names (str) in hierarchical order
+        """
+        rep = self
+        repos = list()
+        while rep.idr_prop['parent_repo'] is not None:
+            rep = rep.idr_prop['parent_repo']
+            repos.append(rep.name)
 
-Sub-Repositories
-----------------
-{sr}\n\n""".format(ro=ro_str, sr=sr_str)
-
-        self.__doc__ = docs + d_str
-
-    def __clear_property_tree(self, clear_internal_tables=False):
-        for base_name, rl in self.__repo_object_table.items():
-            if hasattr(self, base_name):
-                delattr(self, base_name)
-
-        for repo_name, rt in self.__sub_repo_table.items():
-            if hasattr(self, repo_name):
-                delattr(self, repo_name)
-
-        if clear_internal_tables:
-            self.__repo_object_table = dict()
-            self.__sub_repo_table = dict()
-
-    def __build_property_tree_from_file_system(self):
-        all_dir_items = os.listdir(self.idr_prop['repo_root'])
-
-        ### Separate out objects stored in this repo from sub-repos
-        for f in all_dir_items:
-            # Build listing of all base file names (no extension)
-            dot_split = f.split('.')
-            if not isidentifier(dot_split[0]):
-                raise ValueError("File/dir name '%s' is not a valid identifier" % dot_split[0])
-
-            base_name = dot_split[0]
-            is_file = os.path.isfile(os.path.join(self.idr_prop['repo_root'], f))
-
-            # Primary distinction - Repo (dir) vs. Obj (file)
-            if is_file:
-                # Objects leaf is created from base name - Leaf object will map to types
-                self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
-            else:
-                sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
-                p = os.path.join(self.idr_prop['repo_root'], f)
-                self.add_repo_leaf(RepoTree(repo_root=p, parent_repo=self))
-
-        return self
+        return list(reversed(repos))
 
     def refresh(self):
         """
