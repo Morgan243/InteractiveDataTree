@@ -695,7 +695,6 @@ class RepoTree(object):
         # - if so, then check that the object wasn't created by another instance
         # i.e. rescan repo before throwing an error
 
-        # Refresh if we have to and we aren't already refreshing! (Recursive block for this func without additional args)
         do_refresh = item not in self.__repo_object_table and item not in self.__sub_repo_table
 
         if do_refresh:

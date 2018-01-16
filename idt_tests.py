@@ -257,9 +257,14 @@ class InteractiveDataRepo(unittest.TestCase):
             rt.save('not a dataframe',
                     name='foobar', storage_type='hdf')
 
-        with self.assertRaises(pickle.PicklingError):
-            rt.save(lambda x: x*5,
-                    name='foobar_lambda', storage_type='pickle')
+        if EXEC_PYTHON3:
+            with self.assertRaises(AttributeError):
+                rt.save(lambda x: x*5,
+                        name='foobar_lambda', storage_type='pickle')
+        else:
+            with self.assertRaises(pickle.PicklingError):
+                rt.save(lambda x: x*5,
+                        name='foobar_lambda', storage_type='pickle')
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
