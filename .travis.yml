@@ -5,7 +5,8 @@ python:
 # command to install dependencies
 install:
   - python setup.py install
-  - pip install nose
+  - pip install nose coveralls
 # command to run tests
 script:
-  - nosetests -v idt_tests.py # or py.test for Python versions 3.5 and below
+  - nosetests -v idt_tests.py --with-coverage
+after_success: coveralls
