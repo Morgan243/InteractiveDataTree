@@ -1,3 +1,6 @@
+.. image:: https://travis-ci.org/Morgan243/InteractiveDataTree.svg?branch=master
+  :target: https://travis-ci.org/Morgan243/InteractiveDataTree
+
 ### What is it
 DataTree implements simple file-system-based storage of Python objects
 in a way that facilitates quick and simple programmatic access (i.e. interactive).
