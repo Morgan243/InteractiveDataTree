@@ -64,8 +64,6 @@ def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
     js = """IPython.notebook.kernel.execute('%s = ' + '"' + IPython.notebook.notebook_name + '"')""" % var_name
     ipython.run_cell_magic('javascript', '', js)
 
-
-
 class LockFile(object):
     """
     A context object (use in 'with' statement) that attempts to create

@@ -18,8 +18,11 @@ representations where sensible.
 - **Interactive** - Repositories and their objects are represented as properties nested in objects
     - Enables *tab completion*, monkey patched *doc-strings with metadata*, and *rich HTML representations*
 - **Maintainable** - no special internal data or database systems, no lock-in.
-- **Flexible** - Primary data storage logic is generalized in the StorageType object. Extend to add features and new types
-- **Metadata history** stored with every object and made *searchable*
+    - DataTree is currently self-contained in a single module file - drop it in and start using
+- **Flexible** - Primary data storage logic is generalized in the StorageInterface class.
+    - Adding features or a interface for your project only requires extending this class
+- **Metadata** - Every object stores basic metadata (time of operation, object type, etc.) which is made searchable. More targeted StorageInterfaces can extract more significant metadata related to the type.
+    - For instance, the HDF interface for Pandas objects will store the columns and a sample of the index
 
 ### What's it solving
 Iterative tasks in data analysis often require more than one dataset. Furthermore, the
