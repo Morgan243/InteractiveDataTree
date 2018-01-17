@@ -57,6 +57,9 @@ base_master_log_entry = dict(repo_tree=None,
 #   - Simply store a set of dot paths in the metadata
 # - Log interface for easier adjustable verbosity and logging
 
+def message_user(txt):
+    print(txt)
+
 # idt.set_local_var_to_notebook_name(var_name="""idt.shared_metadata[\\'notebook_name\\']""")
 def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
     from IPython import get_ipython
@@ -65,12 +68,29 @@ def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
     js = """IPython.notebook.kernel.execute('%s = ' + '"' + IPython.notebook.notebook_name + '"')""" % var_name
     ipython.run_cell_magic('javascript', '', js)
 
+def norm_vector(v):
+    return sum(_v**2.0 for _v in v)
+
+# Same as dot
+def inner_prod_vector(a, b):
+    return sum(_a * _b for _a, _b in zip(a, b))
+
+def cosine_sim(a, b):
+    na = norm_vector(a)
+    nb = norm_vector(b)
+    sim = inner_prod_vector(a, b)/(na * nb)
+    return sim
+
+def clean_token(tk):
+    remove_chars = set(""",.!@#$%^&*()[]{}/\\`~-+|;:' \t\n\r""")
+    return ''.join(c for c in tk if c not in remove_chars)
+
 def basic_tokenizer(str_data, ngram_range=(1, 1)):
     ngrams = list(range(ngram_range[0], ngram_range[1] + 1))
     tokens = [s.lower() for s in str_data.split()]
     final_tokens = list()
     for n in ngrams:
-        final_tokens += [" ".join(tokens[i:i+n])
+        final_tokens += [clean_token(" ".join(tokens[i:i+n]))
                          for i in range(0, len(tokens), n)]
     return final_tokens
 
@@ -555,7 +575,8 @@ class RepoLeaf(object):
                     break
         return md
 
-    def save(self, obj, storage_type=None, auto_overwrite=False, **md_props):
+    def save(self, obj, storage_type=None, auto_overwrite=False,
+             verbose=True, **md_props):
         """
         Save the object and metadata to the filesystem using a specific
         storage interface
@@ -601,9 +622,12 @@ class RepoLeaf(object):
                     print("Aborting...")
                     return
 
-        print("Saving to: %s.%s (%s)" % (self.parent_repo.name, self.name, storage_type))
+        if verbose:
+            message_user("Saving to: %s.%s (%s)" % (self.parent_repo.name,
+                                                    self.name, storage_type))
         store_int.save(obj, **md_props)
-        print("Save Complete")
+        if verbose:
+            message_user("Save Complete")
 
 
         self.parent_repo._append_to_master_log(operation='save', leaf=self,
@@ -629,7 +653,7 @@ class RepoLeaf(object):
         """
         if storage_type is None:
             filenames = glob(self.save_path + '.*')
-            print("Deleting: %s" % ",".join(filenames))
+            message_user("Deleting: %s" % ",".join(filenames))
             [os.remove(fn) for fn in filenames]
         else:
             p = self.type_to_storage_interface_map[storage_type].path
@@ -812,7 +836,8 @@ Sub-Repositories
         log_name = idr_config['master_log']
         log_exists = log_name in root_repo.list(list_repos=False)
         if not log_exists:
-            print("Log doesn't exist yet, creating it at %s.%s" % (self.name, log_name) )
+            message_user("Log doesn't exist yet, creating it at %s.%s" % (self.name,
+                                                                          log_name) )
             root_repo.save([], name=log_name, author='system',
                            comments='log of events across entire tree',
                            tags='idt_log')
@@ -890,32 +915,71 @@ Sub-Repositories
     def _remove_from_index(self, leaf):
         pass
 
-    def _get_index(self):
+    def _load_master_index(self):
         # Open index object in root tree
         #   - Each type has its own index, so use storage type to distinguish
         root_repo = self.get_root()
         ix_name = idr_config['master_index']
         ix_exists = ix_name in root_repo.list(list_repos=False)
         if not ix_exists:
-            print("Master index doesn't exists yet, creating it at %s.%s"
-                  % (self.name, ix_name))
+            message_user("Master index doesn't exists yet, creating it at %s.%s"
+                         % (self.name, ix_name))
             root_repo.save(dict(), name=ix_name, author='system',
                            comments='index of objects across entire tree',
                            tags='idt_index')
         return root_repo.load(name=ix_name, storage_type='pickle')
+
+    def _write_master_index(self, index):
+        root_repo = self.get_root()
+        ix_name = idr_config['master_index']
+        #ix_exists = ix_name in root_repo.list(list_repos=False)
+        root_repo.save(index, name=ix_name, storage_type='pickle',
+                       comments='index of objects across entire tree',
+                       tags='idt_index', auto_overwrite=True)
 
     def _add_to_index(self, leaf):
         # Avoid indexing the index
         if leaf.name in (idr_config['master_log'], idr_config['master_index']):
             return
 
+        leaf_path = ".".join(leaf.parent_repo.get_parent_repo_names())
+        leaf_path += "." + leaf.parent_repo.name + "." + leaf.name
         # Open index object in root tree
         #   - Each type has its own index, so use storage type to distinguish
         vec_map = leaf.get_vector_representation_map()
-        master_index = self._get_index()
+        master_index = self._load_master_index()
 
-    def query(self, q_str, storage_type=None):
-        pass
+        for si_name, vec_dict in vec_map.items():
+            master_index[leaf_path + "." + si_name] = vec_dict
+
+        self._write_master_index(master_index)
+
+    def query(self, q_str):
+        # TODO: add in filters
+        # - storage type
+        # - metadata key substr match
+        q_tokens = basic_tokenizer(str_data=q_str)
+        q_grams = dict()
+        for tk in q_tokens:
+            q_grams[tk] = q_grams.get(tk, 0) + 1
+
+        ix = self._load_master_index()
+        lex = set([tk for vec_dict in ix.values()
+                   for tk in vec_dict.keys()])
+        lex_d = {tk:0 for tk in lex}
+
+        q_vec = dict(lex_d)
+        q_vec.update(q_grams)
+        q_vec = [q_vec[k] for k in sorted(q_vec.keys())]
+
+        sim_res = dict()
+        for leaf_path, vec_dict in ix.items():
+            tmp_vec = dict(lex_d)
+            tmp_vec.update(vec_dict)
+            tmp_vec = [tmp_vec[k] for k in sorted(lex)]
+            sim_res[leaf_path] = cosine_sim(q_vec, tmp_vec)
+
+        return sim_res
 
     def get_root(self):
         """
