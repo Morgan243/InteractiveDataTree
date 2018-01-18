@@ -94,6 +94,7 @@ def basic_tokenizer(str_data, ngram_range=(1, 1)):
                          for i in range(0, len(tokens), n)]
     return final_tokens
 
+#####
 class LockFile(object):
     """
     A context object (use in 'with' statement) that attempts to create
@@ -125,8 +126,6 @@ class LockFile(object):
         os.close(self.fs_lock)
         os.remove(self.path)
 
-#######
-# Storage Interfaces
 class StorageInterface(object):
     """
     Base storage interface representing an arbitrary python object
@@ -134,6 +133,7 @@ class StorageInterface(object):
     from this class.
     """
     extension = 'pkl'
+    expose_on_leaf = ['exists']
 
     def __init__(self, path, name):
         self.name = name
@@ -286,6 +286,7 @@ class HDFStorageInterface(StorageInterface):
     storage of tabular data.
     """
     extension = 'hdf'
+    expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
     hdf_data_level = '/data'
     hdf_format = 'fixed'
 
@@ -426,11 +427,9 @@ type_storage_lookup = {pd.DataFrame: 'hdf',
                        pd.Series: 'hdf'}
 
 storage_type_priority_order = ['hdf', 'pickle']
+storage_type_priority_map = {k: i
+                             for i, k in enumerate(storage_type_priority_order)}
 
-########
-# Hierarchical structure
-# Tree -> Leaf -> Storage Types
-# All one to many
 class RepoLeaf(object):
     """
     A terminating node in the repo tree, providing an interface
@@ -452,6 +451,7 @@ class RepoLeaf(object):
         self.name = name
 
         self.save_path = os.path.join(self.parent_repo.idr_prop['repo_root'], self.name)
+        self.type_to_storage_interface_map = dict()
         self.refresh()
 
     def __call__(self, *args, **kwargs):
@@ -468,34 +468,50 @@ class RepoLeaf(object):
 
     def __update_doc_str(self):
         docs = self.name + "\n\n"
-        for st in storage_type_priority_order:
-            if st not in self.type_to_storage_interface_map:
-                continue
+        si = self._get_highest_priority_si()
 
-            md = self.read_metadata(storage_type=st)
+        if si is None:
+            return
 
-            if len(md) == 0:
-                docs = "No metadata!"
-                break
-            else:
-                md = md[-1]
+        md = si.read_metadata()
 
-            auth = md.get("author")
-            comm = md.get("comments")
-            ts = md.get("write_time")
-            ty = md.get('obj_type')
-            tags = md.get('tags')
+        if len(md) == 0:
+            return
+        else:
+            md = md[-1]
 
-            docs += st + "\n" + "-"*len(st) + "\n"
-            docs += "  Author: " + (auth if auth is not None else "No author") + "\n"
-            docs += "  Timestamp: " + (ts if ts is not None else "No timestamp") + "\n"
-            docs += "  Comments: " + (comm if comm is not None else "No comments") + "\n"
-            docs += "  Type: " + (ty if ty is not None else "No type") + "\n"
-            docs += "  Tags: " + (tags if tags is not None else "No tags") + "\n"
-            docs += "\n\n"
+        auth = md.get("author")
+        comm = md.get("comments")
+        ts = md.get("write_time")
+        ty = md.get('obj_type')
+        tags = md.get('tags')
+
+        docs += si.name + "\n" + "-"*len(si.name) + "\n"
+        docs += "  Author: " + (auth if auth is not None else "No author") + "\n"
+        docs += "  Timestamp: " + (ts if ts is not None else "No timestamp") + "\n"
+        docs += "  Comments: " + (comm if comm is not None else "No comments") + "\n"
+        docs += "  Type: " + (ty if ty is not None else "No type") + "\n"
+        docs += "  Tags: " + (tags if tags is not None else "No tags") + "\n"
+        docs += "\n\n"
         self.__doc__ = docs
 
-    def __update_typed_paths(self):
+    def _get_highest_priority_si(self):
+        for st in storage_type_priority_order:
+            if st in self.type_to_storage_interface_map:
+                return self.type_to_storage_interface_map[st]
+
+    def _repr_html_(self):
+        return self._get_highest_priority_si()._repr_html_()
+
+    def get_vector_representation_map(self):
+        self.refresh()
+        return {ty:si.get_vector_representation()
+                for ty, si in self.type_to_storage_interface_map.items()}
+
+    def get_reference_string(self, storage_type=None):
+        pass
+
+    def refresh(self):
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
 
@@ -513,38 +529,34 @@ class RepoLeaf(object):
         self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v,
                                                                        name=self.name)
                                               for k, v in self.tmp.items()}
+
         # Delete types that are no longer present on the FS
         next_types = set(self.type_to_storage_interface_map.keys())
+
         for t in (cur_types - next_types):
             si = cur_si_map[t]
             delattr(self, t)
 
-            if hasattr(si, 'sample') and callable(getattr(si, 'sample')):
-                if hasattr(self, 'sample') and self.sample == si.sample:
-                   delattr(self, 'sample')
+            for eol in si.expose_on_leaf:
+                if hasattr(si, eol):#
+                    if hasattr(self, eol) and getattr(self, eol) == getattr(si, eol):
+                       delattr(self, eol)
 
-        for t in next_types:
-            si = self.type_to_storage_interface_map[t]
-            setattr(self, t, si)
+        if len(next_types) > 0:
+            for t in next_types:
+                si = self.type_to_storage_interface_map[t]
+                setattr(self, t, si)
 
-            if hasattr(si, 'sample') and callable(getattr(si, 'sample')):
-                setattr(self, 'sample', si.sample)
+            # Only expose SI attrs from the highest priority SI
+            next_types = sorted(list(next_types),
+                                key=lambda t: storage_type_priority_map[t])
+            priority_type = self.type_to_storage_interface_map[next_types[0]]
+
+            for eol in priority_type.expose_on_leaf:
+                if hasattr(si, eol):
+                    setattr(self, eol, getattr(si, eol))
 
         self.__update_doc_str()
-
-    def _repr_html_(self):
-        for st in storage_type_priority_order:
-            if st in self.type_to_storage_interface_map:
-                return self.type_to_storage_interface_map[st]._repr_html_()
-
-    def get_vector_representation_map(self):
-        self.refresh()
-        return {ty:si.get_vector_representation()
-                for ty, si in self.type_to_storage_interface_map.items()}
-
-    def refresh(self):
-        self.type_to_storage_interface_map = dict()
-        self.__update_typed_paths()
         return self
 
     def read_metadata(self, storage_type=None):
@@ -591,6 +603,8 @@ class RepoLeaf(object):
             Storage interface type name to use
         auto_overwrite : bool (default=False)
             If True, user is not prompted for overwriting an existing object.
+        verbose : bool (default=True)
+            If True, prints additional debug and feedback messages
         md_kwargs : Key-value pairs to include in the metadata entry
             Some storage interfaces may automatically extract metadata
 
