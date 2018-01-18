@@ -132,6 +132,7 @@ class StorageInterface(object):
     stored using pickle. New storage interfaces should be derived
     from this class.
     """
+    storage_name = 'pickle'
     extension = 'pkl'
     expose_on_leaf = ['exists']
 
@@ -285,6 +286,7 @@ class HDFStorageInterface(StorageInterface):
     Pandas storage interface backed by HDF5 (PyTables) for efficient
     storage of tabular data.
     """
+    storage_name = 'hdf'
     extension = 'hdf'
     expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
     hdf_data_level = '/data'
@@ -466,6 +468,14 @@ class RepoLeaf(object):
         """
         return self.load(storage_type=None)
 
+    def __getitem__(self, item):
+        if item not in self.type_to_storage_interface_map:
+            msg = "No storage interface '%s'. Expected one of %s"
+            msg = msg % (item, ",".join(self.type_to_storage_interface_map.keys()))
+            raise KeyError(msg)
+
+        return self.type_to_storage_interface_map[item]
+
     def __update_doc_str(self):
         docs = self.name + "\n\n"
         si = self._get_highest_priority_si()
@@ -508,8 +518,20 @@ class RepoLeaf(object):
         return {ty:si.get_vector_representation()
                 for ty, si in self.type_to_storage_interface_map.items()}
 
-    def get_reference_string(self, storage_type=None):
-        pass
+    def reference(self, storage_type=None):
+        r_names = self.parent_repo.get_parent_repo_names()
+
+        if storage_type is None:
+            type_ext = self._get_highest_priority_si().storage_name
+        else:
+            type_ext = self.type_to_storage_interface_map[storage_type].storage_name
+
+        r_names.append(self.parent_repo.name)
+        r_names.append(self.name)
+        r_names.append(type_ext)
+
+        ref_str = '-'.join(r_names)
+        return ref_str
 
     def refresh(self):
         mde = idr_config['metadata_extension']
@@ -535,7 +557,7 @@ class RepoLeaf(object):
 
         for t in (cur_types - next_types):
             si = cur_si_map[t]
-            delattr(self, t)
+            delattr(self, si.storage_name)
 
             for eol in si.expose_on_leaf:
                 if hasattr(si, eol):#
@@ -545,7 +567,7 @@ class RepoLeaf(object):
         if len(next_types) > 0:
             for t in next_types:
                 si = self.type_to_storage_interface_map[t]
-                setattr(self, t, si)
+                setattr(self, si.storage_name, si)
 
             # Only expose SI attrs from the highest priority SI
             next_types = sorted(list(next_types),
@@ -1185,6 +1207,22 @@ Sub-Repositories
             return objs
         else:
             raise ValueError("List repos and list objs set to False - nothing to do")
+
+    def from_reference(self, ref_str):
+        nodes = ref_str.split('-')
+        root_repo = self.get_root()
+
+        if root_repo.name != nodes[0]:
+            msg = "Reference string is not absolute! Expected root '%s', got '%s'"
+            msg = msg % (root_repo.name, nodes[0])
+            raise ValueError(msg)
+
+        curr_node = root_repo
+        # Slice: First is root, last is type
+        for n in nodes[1:]:
+            curr_node = curr_node[n]
+
+        return curr_node
 
     def summary(self):
         """

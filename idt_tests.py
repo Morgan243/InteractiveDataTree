@@ -180,6 +180,15 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual('foobar', lvl1.test_df.read_metadata()[-1]['comments'])
         self.assertEqual('tester', lvl1.test_df.read_metadata(storage_type='hdf')[-1]['author'])
 
+    def test_str_reference(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        lvl1 = rt.mkrepo('lvl1')
+        lvl3 = lvl1.mkrepo('lvl2').mkrepo('lvl3')
+        lvl3.save('some string data', name='foobar')
+
+        ref_str = lvl3.foobar.reference()
+        self.assertEqual(lvl3.foobar.pickle, rt.from_reference(ref_str))
+
     def test_getitem(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -189,9 +198,19 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl3.save('some string data', name='foobar')
         self.assertEqual(lvl3.foobar, lvl3['foobar'])
         self.assertEqual(lvl3.foobar, rt['lvl1']['lvl2']['lvl3']['foobar'])
+        self.assertEqual(lvl3.foobar.pickle, rt['lvl1']['lvl2']['lvl3']['foobar']['pickle'])
 
         with self.assertRaises(KeyError):
             t = lvl1['not_there']
+
+        with self.assertRaises(KeyError):
+            t = rt['lvl1']['lvl2']['lvl3']['foobar']['hdf']
+
+    def test_setitem(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        with self.assertRaises(NotImplementedError):
+            rt['foobar_str'] = 'some string data'
+
 
     def test_html_repr(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
