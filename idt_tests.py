@@ -269,6 +269,24 @@ class InteractiveDataRepo(unittest.TestCase):
                 rt.save(lambda x: x*5,
                         name='foobar_lambda', storage_type='pickle')
 
+    def test_query(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('subrepo_a').save('str object', name='some_data',
+                comments='something to search for')
+        rt.subrepo_a.save('foobar object', name='other_data',
+                comments='12nm 1n2d 121 23j')
+        rt.mkrepo('subrepo_b').save('foobar thing', name='more_data',
+                comments=',mncxzlaj aois mas na')
+
+        res = rt.query('something to search for')
+        k = rt.name + '.subrepo_a.some_data.pickle'
+        self.assertTrue(res[k] == max(res.values()))
+
+        res = rt.query('12nm 121 23j 1n2d')
+        k = rt.name + '.subrepo_a.other_data.pickle'
+        self.assertTrue(res[k] == max(res.values()))
+
+
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
 # - Basic search functionality off of tree

@@ -348,7 +348,6 @@ class HDFStorageInterface(StorageInterface):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
-
     def write_metadata(self, obj=None, **md_kwargs):
         """
         Locks metadata file, reads current contents, and appends
@@ -539,12 +538,14 @@ class RepoLeaf(object):
                 return self.type_to_storage_interface_map[st]._repr_html_()
 
     def get_vector_representation_map(self):
+        self.refresh()
         return {ty:si.get_vector_representation()
                 for ty, si in self.type_to_storage_interface_map.items()}
 
     def refresh(self):
         self.type_to_storage_interface_map = dict()
         self.__update_typed_paths()
+        return self
 
     def read_metadata(self, storage_type=None):
         """
@@ -666,6 +667,7 @@ class RepoLeaf(object):
         self.parent_repo._append_to_master_log(operation='delete', leaf=self,
                                                author=author,
                                                storage_type=storage_type)
+        self.parent_repo._remove_from_index(self, storage_type=storage_type)
         self.parent_repo.refresh()
 
     def load(self, storage_type=None):
@@ -794,43 +796,6 @@ Sub-Repositories
 
         self.__doc__ = docs + d_str
 
-    def __clear_property_tree(self, clear_internal_tables=False):
-        for base_name, rl in self.__repo_object_table.items():
-            if hasattr(self, base_name):
-                delattr(self, base_name)
-
-        for repo_name, rt in self.__sub_repo_table.items():
-            if hasattr(self, repo_name):
-                delattr(self, repo_name)
-
-        if clear_internal_tables:
-            self.__repo_object_table = dict()
-            self.__sub_repo_table = dict()
-
-    def __build_property_tree_from_file_system(self):
-        all_dir_items = os.listdir(self.idr_prop['repo_root'])
-
-        ### Separate out objects stored in this repo from sub-repos
-        for f in all_dir_items:
-            # Build listing of all base file names (no extension)
-            dot_split = f.split('.')
-            if not isidentifier(dot_split[0]):
-                raise ValueError("File/dir name '%s' is not a valid identifier" % dot_split[0])
-
-            base_name = dot_split[0]
-            is_file = os.path.isfile(os.path.join(self.idr_prop['repo_root'], f))
-
-            # Primary distinction - Repo (dir) vs. Obj (file)
-            if is_file:
-                # Objects leaf is created from base name - Leaf object will map to types
-                self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
-            else:
-                sub_repo_name = f.replace('.' + idr_config['repo_extension'], '')
-                p = os.path.join(self.idr_prop['repo_root'], f)
-                self.add_repo_leaf(RepoTree(repo_root=p, parent_repo=self))
-
-        return self
-
     def _load_master_log(self):
         root_repo = self.get_root()
         log_name = idr_config['master_log']
@@ -912,7 +877,7 @@ Sub-Repositories
 
         return html
 
-    def _remove_from_index(self, leaf):
+    def _remove_from_index(self, leaf, storage_type):
         pass
 
     def _load_master_index(self):
@@ -926,7 +891,7 @@ Sub-Repositories
                          % (self.name, ix_name))
             root_repo.save(dict(), name=ix_name, author='system',
                            comments='index of objects across entire tree',
-                           tags='idt_index')
+                           tags='idt_index', verbose=False)
         return root_repo.load(name=ix_name, storage_type='pickle')
 
     def _write_master_index(self, index):
@@ -935,7 +900,8 @@ Sub-Repositories
         #ix_exists = ix_name in root_repo.list(list_repos=False)
         root_repo.save(index, name=ix_name, storage_type='pickle',
                        comments='index of objects across entire tree',
-                       tags='idt_index', auto_overwrite=True)
+                       tags='idt_index', auto_overwrite=True,
+                       verbose=False)
 
     def _add_to_index(self, leaf):
         # Avoid indexing the index
@@ -991,18 +957,6 @@ Sub-Repositories
         while rep.idr_prop['parent_repo'] is not None:
             rep = rep.idr_prop['parent_repo']
         return rep
-
-    def build_query_indices(self):
-        parent_str = ".".join(self.get_parent_repo_names()) + '.' + self.name
-        index_dict = dict()
-        for name, leaf in self.__repo_object_table.items():
-            k = parent_str + '.' + leaf.name
-            index_dict[k] = leaf.get_vector_representation_map()
-
-        for name, tree in self.__sub_repo_table.items():
-            index_dict.update(tree.build_query_indices())
-
-        return index_dict
 
     def get_parent_repo_names(self):
         """
@@ -1079,6 +1033,8 @@ Sub-Repositories
         if hasattr(self, name) and isinstance(getattr(self, name), RepoLeaf):
             delattr(self, name)
 
+        self.__update_doc_str()
+
     def add_obj_leaf(self, leaf):
         self.__repo_object_table[leaf.name] = leaf
 
@@ -1088,9 +1044,12 @@ Sub-Repositories
         if not repo_coll:
             setattr(self, leaf.name, leaf)
 
+        self.__update_doc_str()
+
     def add_repo_tree(self, tree):
         self.__sub_repo_table[tree.name] = tree
         setattr(self, tree.name, tree)
+        self.__update_doc_str()
 
     def save(self, obj, name, author=None, comments=None, tags=None,
              auto_overwrite=False, storage_type=None, **extra_kwargs):
@@ -1179,10 +1138,6 @@ Sub-Repositories
                 raise ValueError("Repo %s already exists" % repo_root)
         else:
             self.add_repo_tree(RepoTree(repo_root=repo_root, parent_repo=self))
-            #self.__clear_property_tree()
-            #self.__sub_repo_table[name] = RepoTree(repo_root=repo_root,
-            #                                       parent_repo=self)
-            #self.__assign_property_tree()
 
         self._append_to_master_log(operation='mkrepo')
 
