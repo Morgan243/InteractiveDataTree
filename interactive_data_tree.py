@@ -136,12 +136,10 @@ class StorageInterface(object):
     extension = 'pkl'
     expose_on_leaf = ['exists']
 
-    def __init__(self, path, name):
-        self.name = name
-        if path[-len(self.extension):] != self.extension:
-            self.path = path + '.' + self.extension
-        else:
-            self.path = path
+    def __init__(self, parent_leaf):
+        self.parent_leaf = parent_leaf
+        self.name = parent_leaf.name
+        self.path = parent_leaf.save_path + '.' + self.extension
 
         self.lock_file = self.path + '.' + idr_config['lock_extension']
 
@@ -548,8 +546,7 @@ class RepoLeaf(object):
         self.tmp = {extension_to_interface_name_map[k]: v
                     for k, v in self.tmp.items()}
 
-        self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v,
-                                                                       name=self.name)
+        self.type_to_storage_interface_map = {k: storage_interfaces[k](parent_leaf=self)
                                               for k, v in self.tmp.items()}
 
         # Delete types that are no longer present on the FS
@@ -611,7 +608,9 @@ class RepoLeaf(object):
         return md
 
     def save(self, obj, storage_type=None, auto_overwrite=False,
-             verbose=True, **md_props):
+             verbose=True,
+             references=None,
+             **md_props):
         """
         Save the object and metadata to the filesystem using a specific
         storage interface
@@ -638,8 +637,22 @@ class RepoLeaf(object):
         if storage_type is None:
             storage_type = type_storage_lookup.get(type(obj), 'pickle')
 
+        if references is None:
+            references = list()
+
+        if not isinstance(references, list):
+            references = [references]
+
+        # ensure all references are valid by converting them to interfaces
+        ref_interfaces = [self.parent_repo.from_reference(tr)
+                          for tr in references]
+        md_props['references'] = [tr.reference() if not isinstance(tr, basestring)
+                                  else tr
+                                  for tr in references]
+
         # Construct the filesystem path using a typed extension
-        store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
+        #store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
+        store_int = storage_interfaces[storage_type](parent_leaf=self)
 
         # Double Check - file exists there or file is registered in memory
         if store_int.exists() or storage_type in self.type_to_storage_interface_map:
@@ -662,6 +675,7 @@ class RepoLeaf(object):
         if verbose:
             message_user("Saving to: %s.%s (%s)" % (self.parent_repo.name,
                                                     self.name, storage_type))
+
         store_int.save(obj, **md_props)
 
         if verbose:
@@ -1208,8 +1222,21 @@ Sub-Repositories
         else:
             raise ValueError("List repos and list objs set to False - nothing to do")
 
-    def from_reference(self, ref_str):
-        nodes = ref_str.split('-')
+    def from_reference(self, ref):
+        if isinstance(ref, RepoLeaf):
+            ref = ref._get_highest_priority_si()
+
+        if isinstance(ref, StorageInterface):
+            ref_root = ref.parent_leaf.parent_repo.get_root()
+            this_root = self.get_root()
+            if ref_root != this_root:
+                msg = "The ref object has a different root than this tree."
+                msg += "\nTree root: %s ; Reference's root: %s" % (ref_root, this_root)
+                raise ValueError(msg)
+            else:
+                return ref
+
+        nodes = ref.split('-')
         root_repo = self.get_root()
 
         if root_repo.name != nodes[0]:

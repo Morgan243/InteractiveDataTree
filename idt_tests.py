@@ -19,9 +19,11 @@ class InteractiveDataRepo(unittest.TestCase):
 
     def setUp(self):
         self.repo_root_path = InteractiveDataRepo.get_temp_dir()
+        self.repo_root_path_b = InteractiveDataRepo.get_temp_dir()
 
     def tearDown(self):
         shutil.rmtree(self.repo_root_path)
+        shutil.rmtree(self.repo_root_path_b)
 
     def test_repo_creation(self):
         rep_tree = idt.RepoTree(repo_root=self.repo_root_path)
@@ -185,9 +187,24 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl1 = rt.mkrepo('lvl1')
         lvl3 = lvl1.mkrepo('lvl2').mkrepo('lvl3')
         lvl3.save('some string data', name='foobar')
+        lvl1.save('some more data', name='barmoo', references=lvl3.foobar)
 
         ref_str = lvl3.foobar.reference()
         self.assertEqual(lvl3.foobar.pickle, rt.from_reference(ref_str))
+
+        # reference interface is overloaded to handle either string or StorageInterface objects
+        # If passed a terminating node, make sure the node is just returned
+        self.assertEqual(lvl3.foobar.pickle, rt.from_reference(lvl3.foobar.pickle))
+
+        rt_b = idt.RepoTree(repo_root=self.repo_root_path_b)
+        rt_b.save('some object data', name='barfoo')
+        with self.assertRaises(ValueError):
+            rt.from_reference(rt_b.barfoo.pickle)
+
+        fake_reference = 'rootishrepo-subrepo-subsubrepo-data-pickle'
+        with self.assertRaises(ValueError):
+            rt.from_reference(fake_reference)
+
 
     def test_getitem(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
