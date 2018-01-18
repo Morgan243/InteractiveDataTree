@@ -510,7 +510,8 @@ class RepoLeaf(object):
         self.tmp = {extension_to_interface_name_map[k]: v
                     for k, v in self.tmp.items()}
 
-        self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v, name=self.name)
+        self.type_to_storage_interface_map = {k: storage_interfaces[k](path=v,
+                                                                       name=self.name)
                                               for k, v in self.tmp.items()}
         # Delete types that are no longer present on the FS
         next_types = set(self.type_to_storage_interface_map.keys())
@@ -532,7 +533,6 @@ class RepoLeaf(object):
         self.__update_doc_str()
 
     def _repr_html_(self):
-
         for st in storage_type_priority_order:
             if st in self.type_to_storage_interface_map:
                 return self.type_to_storage_interface_map[st]._repr_html_()
@@ -627,16 +627,17 @@ class RepoLeaf(object):
             message_user("Saving to: %s.%s (%s)" % (self.parent_repo.name,
                                                     self.name, storage_type))
         store_int.save(obj, **md_props)
+
         if verbose:
             message_user("Save Complete")
-
 
         self.parent_repo._append_to_master_log(operation='save', leaf=self,
                                                author=md_props.get('author', None),
                                                storage_type=storage_type)
         self.parent_repo._add_to_index(leaf=self)
 
-        self.__update_typed_paths()
+        #self.__update_typed_paths()
+        self.refresh()
 
     # TODO: Move delete to storage interface, perform with lock?
     def delete(self, author, storage_type=None):
@@ -661,8 +662,6 @@ class RepoLeaf(object):
             md_p = self.type_to_storage_interface_map[storage_type].md_path
             os.remove(p)
             os.remove(md_p)
-        self.__update_typed_paths()
-        #self.parent_repo.refresh()
 
         self.parent_repo._append_to_master_log(operation='delete', leaf=self,
                                                author=author,
@@ -996,12 +995,12 @@ Sub-Repositories
             if is_file:
                 # Had the object before - don't create new Leaf
                 if base_name in obj_curr:
-                    self.add_obj_leaf(obj_curr[base_name])
+                    self.add_obj_leaf(obj_curr[base_name].refresh())
                 else:
                     self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
             else:
                 if base_name in repo_curr:
-                    self.add_repo_tree(repo_curr[base_name])
+                    self.add_repo_tree(repo_curr[base_name].refresh())
                 else:
                     p = os.path.join(self.idr_prop['repo_root'], f)
                     self.add_repo_tree(RepoTree(repo_root=p, parent_repo=self))
