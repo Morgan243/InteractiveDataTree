@@ -146,6 +146,9 @@ class StorageInterface(object):
         self.md_path = self.path + '.' + idr_config['metadata_extension']
         self.lock_md_file = self.md_path + '.' + idr_config['lock_extension']
 
+    def __call__(self, *args, **kwargs):
+        return self.load()
+
     def exists(self):
         return os.path.isfile(self.path)
 
@@ -626,6 +629,7 @@ class RepoLeaf(object):
             If True, user is not prompted for overwriting an existing object.
         verbose : bool (default=True)
             If True, prints additional debug and feedback messages
+
         md_kwargs : Key-value pairs to include in the metadata entry
             Some storage interfaces may automatically extract metadata
 
@@ -656,11 +660,11 @@ class RepoLeaf(object):
 
         # Double Check - file exists there or file is registered in memory
         if store_int.exists() or storage_type in self.type_to_storage_interface_map:
-            if auto_overwrite:
+            if auto_overwrite and verbose:
                 print("Auto overwriting '%s' (%s) in %s " % (self.name,
                                                              storage_type,
                                                              self.parent_repo.name))
-            else:
+            elif not auto_overwrite:
                 prompt = "An object named '%s' (%s) in %s already exists" % (self.name,
                                                                              storage_type,
                                                                              self.parent_repo.name)
@@ -680,13 +684,14 @@ class RepoLeaf(object):
 
         if verbose:
             message_user("Save Complete")
+            message_user("-------------")
 
         self.parent_repo._append_to_master_log(operation='save', leaf=self,
                                                author=md_props.get('author', None),
                                                storage_type=storage_type)
+
         self.parent_repo._add_to_index(leaf=self)
 
-        #self.__update_typed_paths()
         self.refresh()
 
     # TODO: Move delete to storage interface, perform with lock?
@@ -773,11 +778,7 @@ class RepoTree(object):
         self.name = self.idr_prop['repo_name']
         self.__repo_object_table = dict()
         self.__sub_repo_table = dict()
-        # Hack?
-        self.__in_refresh = False
-
-        #self.__build_property_tree_from_file_system()
-        #self.refresh()
+        self.refresh()
 
     def __getitem__(self, item):
         in_repos = item in self.__sub_repo_table
@@ -854,6 +855,7 @@ Sub-Repositories
                                                                           log_name) )
             root_repo.save([], name=log_name, author='system',
                            comments='log of events across entire tree',
+                           verbose=False,
                            tags='idt_log')
 
         return root_repo.load(name=log_name)
@@ -864,6 +866,7 @@ Sub-Repositories
 
         root_repo.save(log_data, name=log_name, author='system',
                        comments='log of events across entire tree',
+                       verbose=False,
                        tags='log', auto_overwrite=True)
 
     def _append_to_master_log(self, operation,
@@ -1057,7 +1060,7 @@ Sub-Repositories
 
 
         curr_names = set(list(obj_curr.keys()) + list(repo_curr.keys()))
-        new_names = set(list(self.__repo_object_table.keys()) + list(self.__repo_object_table.keys()))
+        new_names = set(list(self.__repo_object_table.keys()) + list(self.__sub_repo_table.keys()))
         for n in curr_names - new_names:
             delattr(self, n)
 
@@ -1087,7 +1090,6 @@ Sub-Repositories
     def add_obj_leaf(self, leaf):
         self.__repo_object_table[leaf.name] = leaf
 
-        #repo_coll = hasattr(self, leaf.name) and isinstance(getattr(self, leaf.name), RepoTree)
         repo_coll = leaf.name in self.__sub_repo_table
 
         if not repo_coll:

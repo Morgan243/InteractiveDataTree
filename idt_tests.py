@@ -49,6 +49,7 @@ class InteractiveDataRepo(unittest.TestCase):
 
         self.assertEqual(t_obj, rep_tree.load('test_string'))
         self.assertEqual(t_obj, rep_tree.test_string.load(storage_type='pickle'))
+        self.assertEqual(t_obj, rep_tree.test_string.pickle())
         self.assertEqual(t_obj, rep_tree.test_string.load(storage_type=None))
         self.assertEqual(t_obj, rep_tree.test_string())
 
@@ -172,6 +173,20 @@ class InteractiveDataRepo(unittest.TestCase):
     def test_default_init(self):
         rt = idt.RepoTree(repo_root=None)
 
+    def test_reinit(self):
+        # Test that reopening a repo populates correctly
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('subrepo_a').save('str object', name='some_data',
+                comments='something to search for')
+        rt.subrepo_a.save('foobar object', name='other_data',
+                comments='12nm 1n2d 121 23j')
+        rt.mkrepo('subrepo_b').save('foobar thing', name='more_data',
+                comments=',mncxzlaj aois mas na')
+
+        rt2 = idt.RepoTree(repo_root=self.repo_root_path)
+        self.assertTrue('other_data' in dir(rt2.subrepo_a))
+        self.assertTrue('subrepo_b' in dir(rt2))
+
     def test_metadata(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -205,7 +220,6 @@ class InteractiveDataRepo(unittest.TestCase):
         with self.assertRaises(ValueError):
             rt.from_reference(fake_reference)
 
-
     def test_getitem(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -227,7 +241,6 @@ class InteractiveDataRepo(unittest.TestCase):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         with self.assertRaises(NotImplementedError):
             rt['foobar_str'] = 'some string data'
-
 
     def test_html_repr(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
