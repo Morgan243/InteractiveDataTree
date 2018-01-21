@@ -24,6 +24,7 @@ else:
     prompt_input = raw_input
     fs_except = OSError
 
+
 def isidentifier(name):
     try:
         parse('{} = None'.format(name))
@@ -94,6 +95,7 @@ def basic_tokenizer(str_data, ngram_range=(1, 1)):
                          for i in range(0, len(tokens), n)]
     return final_tokens
 
+
 #####
 class LockFile(object):
     """
@@ -125,6 +127,7 @@ class LockFile(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         os.close(self.fs_lock)
         os.remove(self.path)
+
 
 class StorageInterface(object):
     """
@@ -289,6 +292,7 @@ class StorageInterface(object):
         html_str += StorageInterface._build_html_body_(md)
         return html_str
 
+
 class HDFStorageInterface(StorageInterface):
     """
     Pandas storage interface backed by HDF5 (PyTables) for efficient
@@ -439,7 +443,7 @@ class ModelStorageInterface(StorageInterface):
         self.target = md['target']
         self.model = None
 
-    def save(self,obj,
+    def save(self, obj,
              **md_kwargs):
 
         mdl_args = ['data_ref',
@@ -489,6 +493,8 @@ class ModelStorageInterface(StorageInterface):
             _x = X
         preds = self.model.predict_proba(_x)
         return preds
+
+
 #######
 # Data structures to hold and map interfaces with names/extensions
 storage_interfaces = dict(
@@ -505,6 +511,7 @@ type_storage_lookup = {pd.DataFrame: 'hdf',
 storage_type_priority_order = ['hdf', 'pickle', 'model']
 storage_type_priority_map = {k: i
                              for i, k in enumerate(storage_type_priority_order)}
+
 
 class RepoLeaf(object):
     """
@@ -825,6 +832,7 @@ class RepoLeaf(object):
 
 
         return store_int.load()
+
 
 class RepoTree(object):
     """
