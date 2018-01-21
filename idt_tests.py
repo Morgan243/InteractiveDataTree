@@ -86,6 +86,13 @@ class InteractiveDataRepo(unittest.TestCase):
         with self.assertRaises(ValueError):
             rt.load('something not there')
 
+    def test_save_exceptions(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        with self.assertRaises(ValueError):
+            rt.save('something not there', name='foobar',
+                    storage_type='no exist')
+
+
     def test_listing(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
@@ -335,6 +342,33 @@ class InteractiveDataRepo(unittest.TestCase):
         k = rt.name + '.subrepo_a.other_data.pickle'
         self.assertTrue(res[k] == max(res.values()))
 
+    def test_model_storage(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('subrepo_a').save('str object', name='some_data',
+                                    comments='something to search for')
+
+        from sklearn.linear_model import LogisticRegression
+        import numpy as np
+
+        X = np.random.rand(100, 10)
+        y = np.random.rand(100).round()
+
+        X_cv = np.random.rand(100, 10)
+        y_cv = np.random.rand(100).round()
+
+        m = LogisticRegression().fit(X, y)
+        features = ['a', 'b', 'c']
+        target = 'z'
+
+        rt.save(m, name='logit_model',
+                data_ref=rt.subrepo_a.some_data,
+                features=features,
+                target=target,
+                storage_type='model')
+
+        rt.logit_model.model.predict(X_cv)
+        self.assertEqual(rt.logit_model.features, features)
+        self.assertEqual(rt.logit_model.target, target)
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

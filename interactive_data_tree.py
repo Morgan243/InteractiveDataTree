@@ -145,12 +145,19 @@ class StorageInterface(object):
 
         self.md_path = self.path + '.' + idr_config['metadata_extension']
         self.lock_md_file = self.md_path + '.' + idr_config['lock_extension']
+        self.init()
 
     def __call__(self, *args, **kwargs):
         return self.load()
 
+    def init(self):
+        pass
+
     def exists(self):
         return os.path.isfile(self.path)
+
+    def md_exists(self):
+        return os.path.isfile(self.md_path)
 
     def load(self):
         """
@@ -352,6 +359,7 @@ class HDFStorageInterface(StorageInterface):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
+
     def write_metadata(self, obj=None, **md_kwargs):
         """
         Locks metadata file, reads current contents, and appends
@@ -417,11 +425,76 @@ class HDFStorageInterface(StorageInterface):
         return html_str
 
 
+class ModelStorageInterface(StorageInterface):
+    storage_name = 'model'
+    extension = 'mdl'
+    expose_on_leaf = ['predict', 'predict_proba',
+                      'features', 'target']
+    def init(self):
+        if not self.md_exists():
+            return
+
+        md = self.read_metadata()[-1]
+        self.features = md['features']
+        self.target = md['target']
+        self.model = None
+
+    def save(self,obj,
+             **md_kwargs):
+
+        mdl_args = ['data_ref',
+                    'features',
+                    'target']
+
+        for ma in mdl_args:
+            if ma not in md_kwargs:
+                missing_args = set(mdl_args) - set(md_kwargs.keys())
+                msg = "Missing required args: %s" % (",".join(missing_args))
+                raise ValueError(msg)
+
+        if isinstance(md_kwargs['data_ref'], RepoLeaf):
+            md_kwargs['data_ref'] = md_kwargs['data_ref'].reference()
+        elif isinstance(md_kwargs['data_ref'], StorageInterface):
+            md_kwargs['data_ref'] = md_kwargs['data_ref'].parent_leaf.reference()
+
+        #super(ModelStorageInterface, self).write_metadata(obj=obj,
+        #                                                **md_kwargs)
+
+        super(ModelStorageInterface, self).save(obj=obj, **md_kwargs)
+
+    def read_metadata(self, lock=True):
+        md = super(ModelStorageInterface, self).read_metadata()
+        for i in range(len(md)):
+            md[i]['data_ref'] = self.parent_leaf.parent_repo.from_reference(md[i]['data_ref'])
+        return md
+
+    def predict(self, X):
+        if self.model is None:
+            self.model = self.load()
+
+        if isinstance(X, pd.DataFrame):
+            _x = X[self.features].values
+        else:
+            _x = X
+        preds = self.model.predict(_x)
+        return preds
+
+    def predict_proba(self, X):
+        if self.model is None:
+            self.model = self.load()
+
+        if isinstance(X, pd.DataFrame):
+            _x = X[self.features].values
+        else:
+            _x = X
+        preds = self.model.predict_proba(_x)
+        return preds
 #######
 # Data structures to hold and map interfaces with names/extensions
 storage_interfaces = dict(
     pickle=StorageInterface,
     hdf=HDFStorageInterface,
+    model=ModelStorageInterface,
 )
 extension_to_interface_name_map = {v.extension: k
                                    for k, v in storage_interfaces.items()}
@@ -429,7 +502,7 @@ extension_to_interface_name_map = {v.extension: k
 type_storage_lookup = {pd.DataFrame: 'hdf',
                        pd.Series: 'hdf'}
 
-storage_type_priority_order = ['hdf', 'pickle']
+storage_type_priority_order = ['hdf', 'pickle', 'model']
 storage_type_priority_map = {k: i
                              for i, k in enumerate(storage_type_priority_order)}
 
@@ -640,6 +713,10 @@ class RepoLeaf(object):
         # Need target save type for conflict detection and the eventual save
         if storage_type is None:
             storage_type = type_storage_lookup.get(type(obj), 'pickle')
+        elif storage_type not in storage_interfaces:
+            msg = "Unknown storage type '%s', expecting one of %s"
+            msg = msg % (storage_type, ",".join(storage_interfaces.keys()))
+            raise ValueError(msg)
 
         if references is None:
             references = list()
