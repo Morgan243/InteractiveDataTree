@@ -201,8 +201,8 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl1.save(df, 'test_df', storage_type='hdf', comments='foobar', author='tester')
         ld_df = lvl1.test_df.load()
 
-        self.assertEqual('foobar', lvl1.test_df.read_metadata()[-1]['comments'])
-        self.assertEqual('tester', lvl1.test_df.read_metadata(storage_type='hdf')[-1]['author'])
+        self.assertEqual('foobar', lvl1.test_df.read_metadata()['comments'])
+        self.assertEqual('tester', lvl1.test_df.read_metadata(storage_type='hdf')['author'])
 
     def test_str_reference(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)

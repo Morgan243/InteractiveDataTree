@@ -153,6 +153,22 @@ class StorageInterface(object):
     def __call__(self, *args, **kwargs):
         return self.load()
 
+    @staticmethod
+    def __collapse_metadata_deltas(md_entries):
+        if not isinstance(md_entries, list):
+            msg = "Expected md_entries to be a list, got %s instead"
+            raise ValueError(msg % str(type(md_entries)))
+
+        if not all(isinstance(d, dict) for d in md_entries):
+            msg = "Entries in metadata must be dict"
+            raise ValueError(msg)
+
+        # TODO: track first/last time a key was updated in MD
+        latest_md = dict()
+        for md_d in md_entries:
+            latest_md.update(md_d)
+        return latest_md
+
     def init(self):
         pass
 
@@ -219,12 +235,19 @@ class StorageInterface(object):
         md_kwargs['write_time'] = datetime.now().strftime(idr_config['date_format'])
 
         with LockFile(self.lock_md_file):
-            md = self.read_metadata(lock=False)
+            md = self.read_metadata(lock=False, most_recent=False)
+            most_recent_md = StorageInterface.__collapse_metadata_deltas(md)
+
+            # Remove key values that we already have stored (key AND value match)
+            for k, v in most_recent_md.items():
+                if k in md_kwargs and v == md_kwargs[k]:
+                    del md_kwargs[k]
+
             md.append(md_kwargs)
             with open(self.md_path, 'w') as f:
                 json.dump(md, f)
 
-    def read_metadata(self, lock=True):
+    def read_metadata(self, lock=True, most_recent=True):
         """
         Read entire metadata history from storage, with optional
         locking.
@@ -248,6 +271,10 @@ class StorageInterface(object):
                     md = json.load(f)
         else:
             md = []
+
+        if most_recent:
+            md = StorageInterface.__collapse_metadata_deltas(md)
+
         return md
 
     def get_vector_representation(self):
@@ -266,7 +293,7 @@ class StorageInterface(object):
         -------
         List of string terms
         """
-        md = self.read_metadata()[-1]
+        md = self.read_metadata()
         str_md_terms = [basic_tokenizer(v) for k, v in md.items()
                         if isinstance(v, basestring)]
         str_md_terms = [_v for v in str_md_terms for _v in v]
@@ -287,7 +314,7 @@ class StorageInterface(object):
         return html_str
 
     def _repr_html_(self):
-        md = self.read_metadata()[-1]
+        md = self.read_metadata()
         html_str = """<h3> {name} </h3>""".format(name=self.name)
         html_str += StorageInterface._build_html_body_(md)
         return html_str
@@ -363,7 +390,6 @@ class HDFStorageInterface(StorageInterface):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
-
     def write_metadata(self, obj=None, **md_kwargs):
         """
         Locks metadata file, reads current contents, and appends
@@ -399,7 +425,7 @@ class HDFStorageInterface(StorageInterface):
         super(HDFStorageInterface, self).write_metadata(obj=obj, **md_kwargs)
 
     def _repr_html_(self):
-        md = self.read_metadata()[-1]
+        md = self.read_metadata()
 
         basic_descrip = StorageInterface._build_html_body_(md)
         extra_descrip = """
@@ -438,7 +464,7 @@ class ModelStorageInterface(StorageInterface):
         if not self.md_exists():
             return
 
-        md = self.read_metadata()[-1]
+        md = self.read_metadata()
         self.features = md['features']
         self.target = md['target']
         self.model = None
@@ -466,10 +492,13 @@ class ModelStorageInterface(StorageInterface):
 
         super(ModelStorageInterface, self).save(obj=obj, **md_kwargs)
 
-    def read_metadata(self, lock=True):
-        md = super(ModelStorageInterface, self).read_metadata()
-        for i in range(len(md)):
-            md[i]['data_ref'] = self.parent_leaf.parent_repo.from_reference(md[i]['data_ref'])
+    def read_metadata(self, lock=True, most_recent=True):
+        md = super(ModelStorageInterface, self).read_metadata(lock=lock, most_recent=most_recent)
+        if isinstance(md, list):
+            for i in range(len(md)):
+                md[i]['data_ref'] = self.parent_leaf.parent_repo.from_reference(md[i]['data_ref'])
+        else:
+            md['data_ref'] = self.parent_leaf.parent_repo.from_reference(md['data_ref'])
         return md
 
     def predict(self, X):
@@ -566,11 +595,6 @@ class RepoLeaf(object):
 
         md = si.read_metadata()
 
-        if len(md) == 0:
-            return
-        else:
-            md = md[-1]
-
         auth = md.get("author")
         comm = md.get("comments")
         ts = md.get("write_time")
@@ -661,7 +685,7 @@ class RepoLeaf(object):
         self.__update_doc_str()
         return self
 
-    def read_metadata(self, storage_type=None):
+    def read_metadata(self, storage_type=None, most_recent=True):
         """
         Read entire metadata history from storage. Each
         storage interface saves it's own metadata, so
@@ -681,12 +705,12 @@ class RepoLeaf(object):
             if storage_type not in self.type_to_storage_interface_map:
                 raise ValueError("Type %s does not exist for %s" % (storage_type, self.name))
 
-            md = self.type_to_storage_interface_map[storage_type].read_metadata()
+            md = self.type_to_storage_interface_map[storage_type].read_metadata(most_recent=most_recent)
         else:
             md = None
             for po in storage_type_priority_order:
                 if po in self.type_to_storage_interface_map:
-                    md = self.type_to_storage_interface_map[po].read_metadata()
+                    md = self.type_to_storage_interface_map[po].read_metadata(most_recent=most_recent)
                     break
         return md
 
