@@ -92,7 +92,6 @@ class InteractiveDataRepo(unittest.TestCase):
             rt.save('something not there', name='foobar',
                     storage_type='no exist')
 
-
     def test_listing(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
@@ -344,8 +343,9 @@ class InteractiveDataRepo(unittest.TestCase):
 
     def test_model_storage(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
-        rt.mkrepo('subrepo_a').save('str object', name='some_data',
-                                    comments='something to search for')
+        rt.mkrepo('subrepo_a')
+        rt.subrepo_a.save('str object', name='some_data',
+                           comments='something to search for')
 
         from sklearn.linear_model import LogisticRegression
         import numpy as np
@@ -369,6 +369,29 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.logit_model.model.predict(X_cv)
         self.assertEqual(rt.logit_model.features, features)
         self.assertEqual(rt.logit_model.target, target)
+
+    def test_sql_storage(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('subrepo_a').save('str object', name='some_data',
+                                    comments='something to search for')
+
+        sql_obj = idt.SQL(select_statement='id, name, age',
+                          from_statement='db.table',
+                          where_statement='')
+
+        rt.subrepo_a.save(sql_obj,
+                          name='query_name_and_age')
+
+    def test_interface_registration(self):
+        # TODO: This test leaves artifacts that may impact other tests
+        # as it registers a new interface. Consider wiping before after tests
+        class TestInterface(idt.StorageInterface):
+            storage_name = 'test'
+            required_metadata = ['random_req']
+            extension = 'tst'
+
+        idt.register_storage_interface(TestInterface, name='test',
+                                       priority=None, types=None)
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

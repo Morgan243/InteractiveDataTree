@@ -138,6 +138,7 @@ class StorageInterface(object):
     storage_name = 'pickle'
     extension = 'pkl'
     expose_on_leaf = ['exists']
+    required_metadata = []#['author']
 
     def __init__(self, parent_leaf):
         self.parent_leaf = parent_leaf
@@ -152,6 +153,24 @@ class StorageInterface(object):
 
     def __call__(self, *args, **kwargs):
         return self.load()
+
+    @classmethod
+    def __get_missing_metadata_fields(cls, md):
+        if not isinstance(md, dict):
+            raise ValueError("Expected dict, got %s" % str(type(md)))
+
+        if StorageInterface.required_metadata is None:
+            req_md = list()
+        elif not isinstance(StorageInterface.required_metadata, list):
+            req_md = [cls.required_metadata]
+        else:
+            req_md = cls.required_metadata
+
+        missing = list()
+        for rm in req_md:
+            if rm not in md:
+                missing.append(rm)
+        return missing
 
     @staticmethod
     def __collapse_metadata_deltas(md_entries):
@@ -205,6 +224,12 @@ class StorageInterface(object):
         -------
         None
         """
+
+        missing_md = StorageInterface.__get_missing_metadata_fields(md_kwargs)
+        if len(missing_md) > 0:
+            msg = "Missing required metadata fields: %s"
+            raise ValueError(msg % ", ".join(missing_md))
+
         with LockFile(self.lock_file):
             with open(self.path, mode='wb') as f:
                 pickle.dump(obj, f)
@@ -308,9 +333,9 @@ class StorageInterface(object):
         <b>Comments</b>: {comments} <br>
         <b>Type</b>: {ty} <br>
         <b>Tags</b>: {tags} <br>
-        """.format(author=md['author'],
-                   comments=md['comments'], ts=md['write_time'],
-                   ty=md['obj_type'], tags=md['tags'])
+        """.format(author=md.get('author'),
+                   comments=md.get('comments'), ts=md['write_time'],
+                   ty=md['obj_type'], tags=md.get('tags'))
         return html_str
 
     def _repr_html_(self):
@@ -487,9 +512,6 @@ class ModelStorageInterface(StorageInterface):
         elif isinstance(md_kwargs['data_ref'], StorageInterface):
             md_kwargs['data_ref'] = md_kwargs['data_ref'].parent_leaf.reference()
 
-        #super(ModelStorageInterface, self).write_metadata(obj=obj,
-        #                                                **md_kwargs)
-
         super(ModelStorageInterface, self).save(obj=obj, **md_kwargs)
 
     def read_metadata(self, lock=True, most_recent=True):
@@ -523,23 +545,93 @@ class ModelStorageInterface(StorageInterface):
         preds = self.model.predict_proba(_x)
         return preds
 
+from collections import namedtuple
+
+SQL = namedtuple('SQL', ['select_statement', 'from_statement',
+                         'where_statement'])
+class SQLStorageInterface(StorageInterface):
+    storage_name = 'sql'
+    extension = 'sql'
+
+    def init(self):
+        pass
+
+    def save(self, obj, **md_kwargs):
+        if not isinstance(obj, SQL):
+            msg = "SQLStorage expects a datatree SQL object, but got %s"
+            raise ValueError(msg % str(type(obj)))
+
+        if isinstance(obj, dict):
+            obj = SQL(**obj)
+
+    def query(self, cxn):
+        pass
+
+
+#######
+
 
 #######
 # Data structures to hold and map interfaces with names/extensions
-storage_interfaces = dict(
-    pickle=StorageInterface,
-    hdf=HDFStorageInterface,
-    model=ModelStorageInterface,
-)
-extension_to_interface_name_map = {v.extension: k
-                                   for k, v in storage_interfaces.items()}
+storage_interfaces = dict()
 
-type_storage_lookup = {pd.DataFrame: 'hdf',
-                       pd.Series: 'hdf'}
+extension_to_interface_name_map = dict()
 
-storage_type_priority_order = ['hdf', 'pickle', 'model']
-storage_type_priority_map = {k: i
-                             for i, k in enumerate(storage_type_priority_order)}
+type_storage_lookup = dict()
+
+storage_type_priority_order = list()
+storage_type_priority_map = dict()
+
+def register_storage_interface(interface_class, name, priority=None, types=None):
+    global storage_type_priority_map
+    global storage_type_priority_order
+    global type_storage_lookup
+    global extension_to_interface_name_map
+    global storage_interfaces
+
+    if name in storage_interfaces:
+        raise ValueError("Storage interfaced named '%s' is already registered!" % name)
+
+    if not issubclass(interface_class, StorageInterface):
+        args = (name, str(interface_class), str(StorageInterface))
+        raise ValueError("Storage interfaced named '%s' of type %s is not a subclass of %s" % args)
+
+    if interface_class.extension in extension_to_interface_name_map:
+        msg = "%s has specified the extension '%s', which is alread in use by %s"
+        raise ValueError(msg % (str(interface_class),
+                                interface_class.extension,
+                                extension_to_interface_name_map[interface_class.extension]))
+
+    storage_interfaces[name] = interface_class
+    extension_to_interface_name_map[interface_class.extension] = name
+
+    if priority is None:
+        storage_type_priority_order.append(name)
+        storage_type_priority_map[name] = len(storage_type_priority_map) - 1
+    else:
+        for k in storage_type_priority_map.keys():
+            # Shift lower and equal priorities down priorities
+            if storage_type_priority_map[k] >= priority:
+                storage_type_priority_map[k] += 1
+
+        storage_type_priority_map[name] = priority
+        rev_map = {v:k for k, v in storage_type_priority_map.items()}
+        storage_type_priority_order = [rev_map[i]
+                                       for i in range(len(storage_type_priority_map))]
+
+
+    if types is not None:
+        if not isinstance(types, list):
+            types = [types]
+        type_storage_lookup.update({t:name for t in types})
+
+
+register_storage_interface(HDFStorageInterface, 'hdf', 0,
+                           types=[pd.DataFrame, pd.Series])
+register_storage_interface(StorageInterface, 'pickle', 1)
+register_storage_interface(ModelStorageInterface, 'model', 2)
+register_storage_interface(SQLStorageInterface, 'sql', 2,
+                           types=[SQL])
 
 
 class RepoLeaf(object):
@@ -1244,10 +1336,21 @@ Sub-Repositories
         if not isidentifier(name):
             raise ValueError("Name must be a valid python identifier, got '%s'" % name)
 
+        # These are special metadata keys that are built-in and exposed as args
+        if author is not None:
+            extra_kwargs['author'] = author
+        if comments is not None:
+            extra_kwargs['comments'] = comments
+        if tags is not None:
+            extra_kwargs['tags'] = tags
+
         leaf = self.__repo_object_table.get(name, RepoLeaf(parent_repo=self, name=name))
-        leaf.save(obj, storage_type=storage_type, author=author,
-                  auto_overwrite=auto_overwrite, comments=comments, tags=tags,
+        leaf.save(obj, storage_type=storage_type,
+                  auto_overwrite=auto_overwrite,
                   **extra_kwargs)
+        #leaf.save(obj, storage_type=storage_type, author=author,
+        #          auto_overwrite=auto_overwrite, comments=comments, tags=tags,
+        #          **extra_kwargs)
 
         self.add_obj_leaf(leaf)
 
