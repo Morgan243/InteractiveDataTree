@@ -590,7 +590,7 @@ WHERE
 
         store_dict = dict(obj._asdict())
         with LockFile(self.lock_file):
-            with open(self.path, mode='wb') as f:
+            with open(self.path, mode='w') as f:
                 json.dump(store_dict, f)
 
             self.write_metadata(obj=obj, **md_kwargs)
