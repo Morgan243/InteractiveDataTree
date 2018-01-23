@@ -137,23 +137,25 @@ class LockFile(object):
         os.close(self.fs_lock)
         os.remove(self.path)
 
-
 def leaf_to_reference(obj):
-    try:
-        is_leaf_sub = issubclass(obj, RepoLeaf)
-    except TypeError:
-        is_leaf_sub = False
-
-    if isinstance(obj, RepoLeaf) or is_leaf_sub:
+    if isinstance(obj, basestring):
+        return obj
+    elif isinstance(obj, RepoLeaf):
         return obj.reference()
     elif hasattr(obj, '__iter__'):
         return [leaf_to_reference(o) for o in obj]
+        #return [o.reference()
+        #        if isinstance(obj, RepoLeaf)
+        #        else o
+        #        for o in obj]
     else:
         return obj
 
 def reference_to_leaf(tree, obj):
     if isinstance(obj, basestring) and is_valid_uri(obj):
         return tree.from_reference(obj)
+    elif isinstance(obj, basestring):
+        return obj
     elif hasattr(obj, '__iter__'):
         return [reference_to_leaf(tree, o) for o in obj]
     else:
@@ -554,15 +556,6 @@ class ModelStorageInterface(StorageInterface):
             md_kwargs['input_data'] = md_kwargs['input_data'].parent_leaf.reference()
 
         super(ModelStorageInterface, self).save(obj=obj, **md_kwargs)
-
-#    def read_metadata(self, lock=True, most_recent=True):
-#        md = super(ModelStorageInterface, self).read_metadata(lock=lock, most_recent=most_recent)
-#        if isinstance(md, list):
-#            for i in range(len(md)):
-#                md[i]['input_data'] = self.parent_leaf.parent_repo.from_reference(md[i]['input_data'])
-#        else:
-#            md['input_data'] = self.parent_leaf.parent_repo.from_reference(md['input_data'])
-#        return md
 
     def predict(self, X):
         if self.model is None:
