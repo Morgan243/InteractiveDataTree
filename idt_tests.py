@@ -207,9 +207,15 @@ class InteractiveDataRepo(unittest.TestCase):
     def test_str_reference(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
-        lvl3 = lvl1.mkrepo('lvl2').mkrepo('lvl3')
+        lvl2 = lvl1.mkrepo('lvl2')
+        lvl2.save('lvl 2 string', name='barfoo')
+
+        lvl3 = lvl2.mkrepo('lvl3')
         lvl3.save('some string data', name='foobar')
-        lvl1.save('some more data', name='barmoo', references=lvl3.foobar)
+
+        lvl1.save('some more data', name='barmoo',
+                  other=lvl2.barfoo,
+                  references=lvl3.foobar)
 
         ref_str = lvl3.foobar.reference()
         self.assertEqual(lvl3.foobar.pickle, rt.from_reference(ref_str))
@@ -217,6 +223,9 @@ class InteractiveDataRepo(unittest.TestCase):
         # reference interface is overloaded to handle either string or StorageInterface objects
         # If passed a terminating node, make sure the node is just returned
         self.assertEqual(lvl3.foobar.pickle, rt.from_reference(lvl3.foobar.pickle))
+
+        # make sure references are handled on instantiation of new repo
+        rt_a = idt.RepoTree(repo_root=self.repo_root_path)
 
         rt_b = idt.RepoTree(repo_root=self.repo_root_path_b)
         rt_b.save('some object data', name='barfoo')

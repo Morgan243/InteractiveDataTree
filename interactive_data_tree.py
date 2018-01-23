@@ -58,6 +58,15 @@ base_master_log_entry = dict(repo_tree=None,
 #   - Simply store a set of dot paths in the metadata
 # - Log interface for easier adjustable verbosity and logging
 
+def is_valid_uri(obj):
+    if not isinstance(obj, basestring):
+        return False
+    elif obj[:len(URI_SPEC)] == URI_SPEC:
+        return True
+    else:
+        return False
+
+
 def message_user(txt):
     print(txt)
 
@@ -127,6 +136,28 @@ class LockFile(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         os.close(self.fs_lock)
         os.remove(self.path)
+
+
+def leaf_to_reference(obj):
+    try:
+        is_leaf_sub = issubclass(obj, RepoLeaf)
+    except TypeError:
+        is_leaf_sub = False
+
+    if isinstance(obj, RepoLeaf) or is_leaf_sub:
+        return obj.reference()
+    elif hasattr(obj, '__iter__'):
+        return [leaf_to_reference(o) for o in obj]
+    else:
+        return obj
+
+def reference_to_leaf(tree, obj):
+    if isinstance(obj, basestring) and is_valid_uri(obj):
+        return tree.from_reference(obj)
+    elif hasattr(obj, '__iter__'):
+        return [reference_to_leaf(tree, o) for o in obj]
+    else:
+        return obj
 
 
 class StorageInterface(object):
@@ -253,6 +284,10 @@ class StorageInterface(object):
         -------
         None
         """
+
+        for k in md_kwargs.keys():
+            md_kwargs[k] = leaf_to_reference(md_kwargs[k])
+
         if obj is not None:
             md_kwargs['obj_type'] = type(obj).__name__
 
@@ -271,7 +306,8 @@ class StorageInterface(object):
             with open(self.md_path, 'w') as f:
                 json.dump(md, f)
 
-    def read_metadata(self, lock=True, most_recent=True):
+    def read_metadata(self, lock=True, most_recent=True,
+                      resolve_references=True):
         """
         Read entire metadata history from storage, with optional
         locking.
@@ -298,6 +334,16 @@ class StorageInterface(object):
 
         if most_recent:
             md = StorageInterface.__collapse_metadata_deltas(md)
+
+        if resolve_references:
+            if most_recent:
+                for k in md.keys():
+                    md[k] = reference_to_leaf(self.parent_leaf.parent_repo, md[k])
+            else:
+                for _md in md:
+                    for k in _md.keys():
+                        _md[k] = reference_to_leaf(self.parent_leaf.parent_repo,
+                                                   _md[k])
 
         return md
 
@@ -509,14 +555,14 @@ class ModelStorageInterface(StorageInterface):
 
         super(ModelStorageInterface, self).save(obj=obj, **md_kwargs)
 
-    def read_metadata(self, lock=True, most_recent=True):
-        md = super(ModelStorageInterface, self).read_metadata(lock=lock, most_recent=most_recent)
-        if isinstance(md, list):
-            for i in range(len(md)):
-                md[i]['input_data'] = self.parent_leaf.parent_repo.from_reference(md[i]['input_data'])
-        else:
-            md['input_data'] = self.parent_leaf.parent_repo.from_reference(md['input_data'])
-        return md
+#    def read_metadata(self, lock=True, most_recent=True):
+#        md = super(ModelStorageInterface, self).read_metadata(lock=lock, most_recent=most_recent)
+#        if isinstance(md, list):
+#            for i in range(len(md)):
+#                md[i]['input_data'] = self.parent_leaf.parent_repo.from_reference(md[i]['input_data'])
+#        else:
+#            md['input_data'] = self.parent_leaf.parent_repo.from_reference(md['input_data'])
+#        return md
 
     def predict(self, X):
         if self.model is None:
@@ -721,7 +767,7 @@ class RepoLeaf(object):
         if si is None:
             return
 
-        md = si.read_metadata()
+        md = si.read_metadata(resolve_references=False)
 
         auth = md.get("author")
         comm = md.get("comments")
@@ -844,7 +890,7 @@ class RepoLeaf(object):
         return md
 
     def save(self, obj, storage_type=None, auto_overwrite=False,
-             verbose=True, references=None,
+             verbose=True,
              **md_props):
         """
         Save the object and metadata to the filesystem using a specific
@@ -876,19 +922,6 @@ class RepoLeaf(object):
             msg = "Unknown storage type '%s', expecting one of %s"
             msg = msg % (storage_type, ",".join(storage_interfaces.keys()))
             raise ValueError(msg)
-
-        if references is None:
-            references = list()
-
-        if not isinstance(references, list):
-            references = [references]
-
-        # ensure all references are valid by converting them to interfaces
-        ref_interfaces = [self.parent_repo.from_reference(tr)
-                          for tr in references]
-        md_props['references'] = [tr.reference() if not isinstance(tr, basestring)
-                                  else tr
-                                  for tr in references]
 
         # Construct the filesystem path using a typed extension
         #store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
@@ -1031,6 +1064,8 @@ class RepoTree(object):
         elif in_objs:
             return self.__repo_object_table[item]
         else:
+            #try:
+                #ret = getattr(self, item)
             raise KeyError("%s is not in the tree" % str(item))
 
     def __setitem__(self, key, value):
@@ -1175,7 +1210,7 @@ Sub-Repositories
         ix_exists = ix_name in root_repo.list(list_repos=False)
         if not ix_exists:
             message_user("Master index doesn't exists yet, creating it at %s.%s"
-                         % (self.name, ix_name))
+                         % (root_repo.name, ix_name))
             root_repo.save(dict(), name=ix_name, author='system',
                            comments='index of objects across entire tree',
                            tags='idt_index', verbose=False)
