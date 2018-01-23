@@ -335,12 +335,16 @@ class InteractiveDataRepo(unittest.TestCase):
                 comments=',mncxzlaj aois mas na')
 
         res = rt.query('something to search for')
-        k = rt.name + '.subrepo_a.some_data.pickle'
+        k = idt.URI_SPEC + rt.name + '/subrepo_a/some_data/pickle'
         self.assertTrue(res[k] == max(res.values()))
 
         res = rt.query('12nm 121 23j 1n2d')
-        k = rt.name + '.subrepo_a.other_data.pickle'
+        k = idt.URI_SPEC + rt.name + '/subrepo_a/other_data/pickle'
         self.assertTrue(res[k] == max(res.values()))
+
+        ref = rt.subrepo_a.some_data.reference()
+        rt.subrepo_a.some_data.delete(author='unittests')
+        self.assertTrue(ref not in rt.INDEX())
 
     def test_model_storage(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)

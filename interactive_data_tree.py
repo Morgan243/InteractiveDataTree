@@ -32,7 +32,7 @@ def isidentifier(name):
     except (SyntaxError, ValueError, TypeError) as e:
         return False
 
-
+URI_SPEC = 'datatree://'
 idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
                   master_log='LOG', master_index='INDEX',
                   repo_extension='repo', metadata_extension='mdjson',
@@ -763,7 +763,8 @@ class RepoLeaf(object):
         r_names.append(self.name)
         r_names.append(type_ext)
 
-        ref_str = '-'.join(r_names)
+        ref_str = '/'.join(r_names)
+        ref_str = URI_SPEC + ref_str
         return ref_str
 
     def refresh(self):
@@ -925,7 +926,8 @@ class RepoLeaf(object):
                                                author=md_props.get('author', None),
                                                storage_type=storage_type)
 
-        self.parent_repo._add_to_index(leaf=self)
+        self.parent_repo._add_to_index(leaf=self,
+                                       storage_type=storage_type)
 
         self.refresh()
 
@@ -945,7 +947,7 @@ class RepoLeaf(object):
         """
         if storage_type is None:
             filenames = glob(self.save_path + '.*')
-            message_user("Deleting: %s" % ",".join(filenames))
+            message_user("Deleting:\n%s" % "\n".join(filenames))
             [os.remove(fn) for fn in filenames]
         else:
             p = self.type_to_storage_interface_map[storage_type].path
@@ -1165,9 +1167,6 @@ Sub-Repositories
 
         return html
 
-    def _remove_from_index(self, leaf, storage_type):
-        pass
-
     def _load_master_index(self):
         # Open index object in root tree
         #   - Each type has its own index, so use storage type to distinguish
@@ -1187,24 +1186,29 @@ Sub-Repositories
         ix_name = idr_config['master_index']
         #ix_exists = ix_name in root_repo.list(list_repos=False)
         root_repo.save(index, name=ix_name, storage_type='pickle',
+                       author='system',
                        comments='index of objects across entire tree',
                        tags='idt_index', auto_overwrite=True,
                        verbose=False)
 
-    def _add_to_index(self, leaf):
+
+    def _remove_from_index(self, leaf, storage_type):
+        master_index = self._load_master_index()
+        ref = leaf.reference(storage_type=storage_type)
+        del master_index[ref]
+        self._write_master_index(master_index)
+
+    def _add_to_index(self, leaf, storage_type):
         # Avoid indexing the index
         if leaf.name in (idr_config['master_log'], idr_config['master_index']):
             return
 
-        leaf_path = ".".join(leaf.parent_repo.get_parent_repo_names())
-        leaf_path += "." + leaf.parent_repo.name + "." + leaf.name
         # Open index object in root tree
         #   - Each type has its own index, so use storage type to distinguish
         vec_map = leaf.get_vector_representation_map()
         master_index = self._load_master_index()
-
-        for si_name, vec_dict in vec_map.items():
-            master_index[leaf_path + "." + si_name] = vec_dict
+        ref = leaf.reference(storage_type=storage_type)
+        master_index[ref] = vec_map[storage_type]
 
         self._write_master_index(master_index)
 
@@ -1218,13 +1222,16 @@ Sub-Repositories
             q_grams[tk] = q_grams.get(tk, 0) + 1
 
         ix = self._load_master_index()
+
+        # Parse a lexicon from existing vectors
         lex = set([tk for vec_dict in ix.values()
-                   for tk in vec_dict.keys()])
+                   for tk in vec_dict.keys()]
+                  + list(q_grams.keys()))
         lex_d = {tk:0 for tk in lex}
 
         q_vec = dict(lex_d)
         q_vec.update(q_grams)
-        q_vec = [q_vec[k] for k in sorted(q_vec.keys())]
+        q_vec = [q_vec[k] for k in sorted(lex)]
 
         sim_res = dict()
         for leaf_path, vec_dict in ix.items():
@@ -1485,7 +1492,8 @@ Sub-Repositories
             else:
                 return ref
 
-        nodes = ref.split('-')
+        ref = ref.replace(URI_SPEC, '')
+        nodes = ref.split('/')
         root_repo = self.get_root()
 
         if root_repo.name != nodes[0]:
