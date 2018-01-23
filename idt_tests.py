@@ -7,6 +7,7 @@ import interactive_data_tree as idt
 import tempfile
 import shutil
 import sys
+import collections
 
 EXEC_PYTHON3 = sys.version_info > (3, 0)
 # Patching the builtin directly doesn't seem to always work in Python 2
@@ -361,12 +362,13 @@ class InteractiveDataRepo(unittest.TestCase):
         target = 'z'
 
         rt.save(m, name='logit_model',
-                data_ref=rt.subrepo_a.some_data,
+                input_data=rt.subrepo_a.some_data,
                 features=features,
                 target=target,
                 storage_type='model')
 
         rt.logit_model.model.predict(X_cv)
+        rt.logit_model.model.predict_proba(X_cv)
         self.assertEqual(rt.logit_model.features, features)
         self.assertEqual(rt.logit_model.target, target)
 
@@ -381,6 +383,15 @@ class InteractiveDataRepo(unittest.TestCase):
 
         rt.subrepo_a.save(sql_obj,
                           name='query_name_and_age')
+
+        with self.assertRaises(ValueError):
+            rt.subrepo_a.query_name_and_age.query(dict())
+
+        query = lambda x: x
+
+        CXN = collections.namedtuple('CXN', 'query')
+        cxn = CXN(query=query)
+        rt.subrepo_a.query_name_and_age.query(cxn)
 
     def test_interface_registration(self):
         # TODO: This test leaves artifacts that may impact other tests

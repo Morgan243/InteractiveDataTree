@@ -155,7 +155,7 @@ class StorageInterface(object):
         return self.load()
 
     @classmethod
-    def __get_missing_metadata_fields(cls, md):
+    def get_missing_metadata_fields(cls, md):
         if not isinstance(md, dict):
             raise ValueError("Expected dict, got %s" % str(type(md)))
 
@@ -224,8 +224,7 @@ class StorageInterface(object):
         -------
         None
         """
-
-        missing_md = StorageInterface.__get_missing_metadata_fields(md_kwargs)
+        missing_md = StorageInterface.get_missing_metadata_fields(md_kwargs)
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
@@ -485,6 +484,7 @@ class ModelStorageInterface(StorageInterface):
     extension = 'mdl'
     expose_on_leaf = ['predict', 'predict_proba',
                       'features', 'target']
+    required_metadata = ['input_data', 'features', 'target']
     def init(self):
         if not self.md_exists():
             return
@@ -497,20 +497,15 @@ class ModelStorageInterface(StorageInterface):
     def save(self, obj,
              **md_kwargs):
 
-        mdl_args = ['data_ref',
-                    'features',
-                    'target']
+        missing_md = StorageInterface.get_missing_metadata_fields(md_kwargs)
+        if len(missing_md) > 0:
+            msg = "Missing required metadata fields: %s"
+            raise ValueError(msg % ", ".join(missing_md))
 
-        for ma in mdl_args:
-            if ma not in md_kwargs:
-                missing_args = set(mdl_args) - set(md_kwargs.keys())
-                msg = "Missing required args: %s" % (",".join(missing_args))
-                raise ValueError(msg)
-
-        if isinstance(md_kwargs['data_ref'], RepoLeaf):
-            md_kwargs['data_ref'] = md_kwargs['data_ref'].reference()
-        elif isinstance(md_kwargs['data_ref'], StorageInterface):
-            md_kwargs['data_ref'] = md_kwargs['data_ref'].parent_leaf.reference()
+        if isinstance(md_kwargs['input_data'], RepoLeaf):
+            md_kwargs['input_data'] = md_kwargs['input_data'].reference()
+        elif isinstance(md_kwargs['input_data'], StorageInterface):
+            md_kwargs['input_data'] = md_kwargs['input_data'].parent_leaf.reference()
 
         super(ModelStorageInterface, self).save(obj=obj, **md_kwargs)
 
@@ -518,9 +513,9 @@ class ModelStorageInterface(StorageInterface):
         md = super(ModelStorageInterface, self).read_metadata(lock=lock, most_recent=most_recent)
         if isinstance(md, list):
             for i in range(len(md)):
-                md[i]['data_ref'] = self.parent_leaf.parent_repo.from_reference(md[i]['data_ref'])
+                md[i]['input_data'] = self.parent_leaf.parent_repo.from_reference(md[i]['input_data'])
         else:
-            md['data_ref'] = self.parent_leaf.parent_repo.from_reference(md['data_ref'])
+            md['input_data'] = self.parent_leaf.parent_repo.from_reference(md['input_data'])
         return md
 
     def predict(self, X):
@@ -552,20 +547,61 @@ SQL = namedtuple('SQL', ['select_statement', 'from_statement',
 class SQLStorageInterface(StorageInterface):
     storage_name = 'sql'
     extension = 'sql'
+    expose_on_leaf = ['query']
+    required_metadata = []
 
-    def init(self):
-        pass
+    @staticmethod
+    def build_query(sql_obj):
+        if not isinstance(sql_obj, SQL):
+            msg = "Expected SQL object, got %s" % str(sql_obj)
+            raise ValueError(msg)
+
+        template = """
+SELECT
+  {select_statement}
+FROM
+  {from_statement}
+WHERE
+  {where_statement}
+        """
+
+        return template.format(**sql_obj._asdict())
+
+    def load(self):
+        with LockFile(self.lock_file):
+            with open(self.path, mode='r') as f:
+                obj = json.load(f)
+        sql_obj = SQL(**obj)
+        return sql_obj
 
     def save(self, obj, **md_kwargs):
-        if not isinstance(obj, SQL):
+        if isinstance(obj, dict):
+            message_user("Converting dictionary to SQL object")
+            obj = SQL(**obj)
+        elif not isinstance(obj, SQL):
             msg = "SQLStorage expects a datatree SQL object, but got %s"
             raise ValueError(msg % str(type(obj)))
 
-        if isinstance(obj, dict):
-            obj = SQL(**obj)
+        missing_md = self.get_missing_metadata_fields(md_kwargs)
+
+        if len(missing_md) > 0:
+            msg = "Missing required metadata fields: %s"
+            raise ValueError(msg % ", ".join(missing_md))
+
+        store_dict = dict(obj._asdict())
+        with LockFile(self.lock_file):
+            with open(self.path, mode='wb') as f:
+                json.dump(store_dict, f)
+
+            self.write_metadata(obj=obj, **md_kwargs)
 
     def query(self, cxn):
-        pass
+        if not hasattr(cxn, 'query'):
+            msg = 'Argument cxn must have a query method'
+            raise ValueError(msg)
+
+        q = SQLStorageInterface.build_query(self.load())
+        return cxn.query(q)
 
 
 #######
@@ -807,8 +843,7 @@ class RepoLeaf(object):
         return md
 
     def save(self, obj, storage_type=None, auto_overwrite=False,
-             verbose=True,
-             references=None,
+             verbose=True, references=None,
              **md_props):
         """
         Save the object and metadata to the filesystem using a specific
