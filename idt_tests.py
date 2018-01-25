@@ -420,6 +420,18 @@ class InteractiveDataRepo(unittest.TestCase):
         idt.register_storage_interface(TestInterface, name='test',
                                        priority=None, types=None)
 
+    def test_auto_reference_in_md(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        lvl1 = rt.mkrepo('lvl1')
+        lvl1.save('lvl 2 string', name='barfoo')
+
+        lvl1.save('some string data', name='foobar',
+                  other_data=lvl1.barfoo)
+
+        md = lvl1.foobar.read_metadata()
+        self.assertIsInstance(md['other_data'], idt.StorageInterface)
+        self.assertEqual(md['other_data'], lvl1.barfoo.pickle)
+
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
 # - Basic search functionality off of tree

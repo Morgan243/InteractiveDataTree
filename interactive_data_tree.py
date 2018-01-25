@@ -186,6 +186,12 @@ class StorageInterface(object):
     def __call__(self, *args, **kwargs):
         return self.load()
 
+    def __str__(self):
+        #return self.parent_leaf.reference(storage_type=self.storage_name)
+        repos = self.parent_leaf.parent_repo.get_parent_repo_names()
+        repos[0] = 'ROOT'
+        return ".".join(repos + [self.parent_leaf.name, self.storage_name])
+
     @classmethod
     def get_missing_metadata_fields(cls, md):
         if not isinstance(md, dict):
@@ -300,7 +306,8 @@ class StorageInterface(object):
                                                      cls.interface_metadata))
 
         with LockFile(self.lock_md_file):
-            md = self.read_metadata(lock=False, most_recent=False)
+            md = self.read_metadata(lock=False, most_recent=False,
+                                    resolve_references=False)
             most_recent_md = StorageInterface.__collapse_metadata_deltas(md)
 
             # Remove key values that we already have stored (key AND value match)
@@ -539,7 +546,7 @@ class HDFStorageInterface(StorageInterface):
         """.format(basic_description=basic_descrip,
                    extra_description=extra_descrip)
 
-        html_str = """<h3> {name} </h3>""".format(name=self.name)
+        html_str = """<h2> {name} </h2>""".format(name=self.name)
         html_str += div_template
         return html_str
 
@@ -1235,7 +1242,6 @@ Sub-Repositories
                        comments='index of objects across entire tree',
                        tags='idt_index', auto_overwrite=True,
                        verbose=False)
-
 
     def _remove_from_index(self, leaf, storage_type):
         master_index = self._load_master_index()
