@@ -144,10 +144,6 @@ def leaf_to_reference(obj):
         return obj.reference()
     elif hasattr(obj, '__iter__'):
         return [leaf_to_reference(o) for o in obj]
-        #return [o.reference()
-        #        if isinstance(obj, RepoLeaf)
-        #        else o
-        #        for o in obj]
     else:
         return obj
 
@@ -162,6 +158,8 @@ def reference_to_leaf(tree, obj):
         return obj
 
 
+standard_metadata = ['author', 'comments', 'tags',
+                     'write_time', 'obj_type']
 class StorageInterface(object):
     """
     Base storage interface representing an arbitrary python object
@@ -171,6 +169,7 @@ class StorageInterface(object):
     storage_name = 'pickle'
     extension = 'pkl'
     expose_on_leaf = ['exists']
+    interface_metadata = []
     required_metadata = []#['author']
 
     def __init__(self, parent_leaf):
@@ -293,7 +292,12 @@ class StorageInterface(object):
         if obj is not None:
             md_kwargs['obj_type'] = type(obj).__name__
 
+        cls = self.__class__
         md_kwargs['write_time'] = datetime.now().strftime(idr_config['date_format'])
+        md_kwargs['extra_metadata_keys'] = list(set(md_kwargs.keys()) -
+                                                 set(cls.required_metadata +
+                                                     standard_metadata +
+                                                     cls.interface_metadata))
 
         with LockFile(self.lock_md_file):
             md = self.read_metadata(lock=False, most_recent=False)
@@ -383,11 +387,23 @@ class StorageInterface(object):
         """.format(author=md.get('author'),
                    comments=md.get('comments'), ts=md['write_time'],
                    ty=md['obj_type'], tags=md.get('tags'))
+
+
+        extra_keys = md.get('extra_metadata_keys', list())
+        if len(extra_keys) > 0:
+            html_items = ["<b>%s</b>: %s <br>" % (k, str(md[k])[:50])
+                          for k in extra_keys]
+            add_md = """
+            <h4>Additional Metadata</h4>
+            %s
+            """ % "\n".join(html_items)
+            html_str += add_md
+
         return html_str
 
     def _repr_html_(self):
         md = self.read_metadata()
-        html_str = """<h3> {name} </h3>""".format(name=self.name)
+        html_str = """<h2> {name} </h2>""".format(name=self.name)
         html_str += StorageInterface._build_html_body_(md)
         return html_str
 
@@ -402,6 +418,7 @@ class HDFStorageInterface(StorageInterface):
     expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
     hdf_data_level = '/data'
     hdf_format = 'fixed'
+    interface_metadata = ['length', 'columns', 'index_head']
 
     @staticmethod
     def __valid_object_for_storage(obj):

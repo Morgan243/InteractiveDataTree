@@ -198,11 +198,14 @@ class InteractiveDataRepo(unittest.TestCase):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
-        lvl1.save(df, 'test_df', storage_type='hdf', comments='foobar', author='tester')
+        lvl1.save(df, 'test_df', storage_type='hdf', comments='foobar', author='tester',
+                  some_random_md='something_important')
         ld_df = lvl1.test_df.load()
 
         self.assertEqual('foobar', lvl1.test_df.read_metadata()['comments'])
         self.assertEqual('tester', lvl1.test_df.read_metadata(storage_type='hdf')['author'])
+        self.assertEqual('something_important',
+                         lvl1.test_df.read_metadata(storage_type='hdf')['some_random_md'])
 
     def test_str_reference(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
