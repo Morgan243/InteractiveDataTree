@@ -535,8 +535,8 @@ class HDFStorageInterface(StorageInterface):
 
 
         div_template = """
-        <div style="width: 40%;">
-            <div style="float:left; width: 50%">
+        <div style="width: 80%;">
+            <div style="float:left; width: 40%">
             {basic_description}
             </div>
             <div style="float:right;">
@@ -624,11 +624,18 @@ SELECT
   {select_statement}
 FROM
   {from_statement}
+  """
+        if sql_obj.where_statement.strip() != '':
+            template += """
 WHERE
   {where_statement}
         """
+            d = sql_obj._asdict()
+        else:
+            d = sql_obj._asdict()
+            del d['where_statement']
 
-        return template.format(**sql_obj._asdict())
+        return template.format(**d)
 
     def load(self):
         with LockFile(self.lock_file):
