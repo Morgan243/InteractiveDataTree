@@ -1263,7 +1263,7 @@ Sub-Repositories
 
         self._write_master_index(master_index)
 
-    def query(self, q_str):
+    def search(self, q_str, top_n=5, interactive=True):
         # TODO: add in filters
         # - storage type
         # - metadata key substr match
@@ -1291,7 +1291,18 @@ Sub-Repositories
             tmp_vec = [tmp_vec[k] for k in sorted(lex)]
             sim_res[leaf_path] = cosine_sim(q_vec, tmp_vec)
 
-        return sim_res
+        s_keys = sorted(sim_res.keys(),
+                        key=lambda k: sim_res[k],
+                        reverse=True)
+
+        if top_n is not None:
+            sim_res = {k: sim_res[k] for k in s_keys}
+
+        if interactive:
+            for i, k in enumerate(s_keys):
+                print("[%d] %s : %.2f" % (i, k, sim_res[k]*100.0))
+        else:
+            return sim_res
 
     def get_root(self):
         """

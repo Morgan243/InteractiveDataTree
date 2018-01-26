@@ -346,11 +346,11 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.mkrepo('subrepo_b').save('foobar thing', name='more_data',
                 comments=',mncxzlaj aois mas na')
 
-        res = rt.query('something to search for')
+        res = rt.search('something to search for', interactive=False)
         k = idt.URI_SPEC + rt.name + '/subrepo_a/some_data/pickle'
         self.assertTrue(res[k] == max(res.values()))
 
-        res = rt.query('12nm 121 23j 1n2d')
+        res = rt.search('12nm 121 23j 1n2d', interactive=False)
         k = idt.URI_SPEC + rt.name + '/subrepo_a/other_data/pickle'
         self.assertTrue(res[k] == max(res.values()))
 
@@ -435,7 +435,7 @@ class InteractiveDataRepo(unittest.TestCase):
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
 # - Basic search functionality off of tree
-#   - Maybe use Wikipedia vocab to do n-gram similatiry between query and doc
+#   - Maybe use Wikipedia vocab to do n-gram similatiry between search and doc
 #   - Do similarity between code cells?
 #       - Writing something..."one of us has done this"...code simalrity
 # - Test with Python2
