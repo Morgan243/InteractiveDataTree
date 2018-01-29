@@ -392,8 +392,8 @@ class StorageInterface(object):
         <b>Type</b>: {ty} <br>
         <b>Tags</b>: {tags} <br>
         """.format(author=md.get('author'),
-                   comments=md.get('comments'), ts=md['write_time'],
-                   ty=md['obj_type'], tags=md.get('tags'))
+                   comments=md.get('comments'), ts=md.get('write_time'),
+                   ty=md.get('obj_type'), tags=md.get('tags'))
 
 
         extra_keys = md.get('extra_metadata_keys', list())
@@ -528,10 +528,10 @@ class HDFStorageInterface(StorageInterface):
         <b>Num Entries </b> : {num_entries} <br>
         <b>Columns</b> ({n_cols}) : {col_sample} <br>
         <b>Index Head</b> : {ix_head} <br>
-        """.format(num_entries=md['length'],
-                   n_cols=len(md['columns']),
-                   col_sample=", ".join(md['columns'][:10]),
-                   ix_head=", ".join(md['index_head']))
+        """.format(num_entries=md.get('length'),
+                   n_cols=len(md.get('columns')),
+                   col_sample=", ".join(md.get('columns', [])[:10]),
+                   ix_head=", ".join(md.get('index_head', [])))
 
 
         div_template = """
