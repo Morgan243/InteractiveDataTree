@@ -1516,7 +1516,7 @@ Sub-Repositories
             Name or ID of the creator
         comments : str (default=None)
             Misc. comments to include in the metadata
-        tags : str (default=Non)
+        tags : str (default=None)
             Whitespace separated tags to include in the metadata
         auto_overwrite : bool (default=False)
             If True, user is not prompted for overwriting an existing object.
