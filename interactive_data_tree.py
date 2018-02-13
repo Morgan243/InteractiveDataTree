@@ -1,5 +1,6 @@
 # Author: Morgan Stuart
 import abc
+import string
 import json
 import pickle
 import pandas as pd
@@ -513,6 +514,7 @@ class HDFStorageInterface(StorageInterface):
 
         if isinstance(obj, pd.DataFrame):
             md_kwargs['columns'] = list(str(c) for c in obj.columns)
+            md_kwargs['dtypes'] = list(str(d) for d in obj.dtypes)
 
         if obj is not None:
             md_kwargs['index_head'] = list(str(i) for i in obj.index[:5])
@@ -603,39 +605,88 @@ class ModelStorageInterface(StorageInterface):
         preds = self.model.predict_proba(_x)
         return preds
 
-from collections import namedtuple
+class SQL(object):
+    def __init__(self, select_statement, from_statement,
+                 where_statement='', query_parameters=None):
+        self.select_statement = select_statement
+        self.from_statement = from_statement
+        self.where_statement = where_statement
+        self.query_parameters = dict() if query_parameters is None else query_parameters
+        self.section_params = dict()
 
-SQL = namedtuple('SQL', ['select_statement', 'from_statement',
-                         'where_statement'])
-class SQLStorageInterface(StorageInterface):
-    storage_name = 'sql'
-    extension = 'sql'
-    expose_on_leaf = ['query']
-    required_metadata = []
+        params_seen = set()
+        params_expected = set(self.query_parameters.keys())
+        for section, txt in self.asdict().items():
+            # Lazy
+            if section == 'query_parameters':
+                continue
+            parse_args = string.Formatter().parse(txt)
+            self.section_params[section] = [pa[1] for pa in parse_args
+                                if pa[1] is not None and isidentifier(pa[1])]
+            self.section_params[section] = set(self.section_params[section])
+            params_seen = params_seen.union(self.section_params[section])
 
-    @staticmethod
-    def build_query(sql_obj):
-        if not isinstance(sql_obj, SQL):
-            msg = "Expected SQL object, got %s" % str(sql_obj)
+        if params_expected != params_seen:
+            msg = "Default values must be provided for all parameters, missing: "
+            msg += ",".join(params_expected - params_seen)
             raise ValueError(msg)
+
+    def asdict(self):
+        return dict(select_statement=self.select_statement,
+                    from_statement=self.from_statement,
+                    where_statement=self.where_statement,
+                    query_parameters=self.query_parameters)
+
+    def build_query(self, **parameters):
+        sel_p = {sp:parameters.get(sp, self.query_parameters.get(sp))
+                    for sp in self.section_params['select_statement']}
+
+        sel = self.select_statement.format(**sel_p)
+
+        frm_p = {sp:parameters.get(sp, self.query_parameters.get(sp))
+                 for sp in self.section_params['from_statement']}
+        frm = self.from_statement.format(**frm_p)
+
+        whr_p = {sp:parameters.get(sp, self.query_parameters.get(sp))
+                 for sp in self.section_params['where_statement']}
+        whr = self.where_statement.format(**whr_p)
 
         template = """
 SELECT
   {select_statement}
 FROM
   {from_statement}
-  """
-        if sql_obj.where_statement.strip() != '':
+  """.format(select_statement=sel,
+             from_statement=frm)
+
+        if self.where_statement.strip() != '':
             template += """
 WHERE
   {where_statement}
-        """
-            d = sql_obj._asdict()
-        else:
-            d = sql_obj._asdict()
-            del d['where_statement']
+        """.format(where_statement=whr)
 
-        return template.format(**d)
+        return template
+
+    def _repr_html_(self):
+        from pygments import highlight
+        from pygments.lexers import SqlLexer
+        from pygments.formatters import HtmlFormatter
+        formatter = HtmlFormatter(style='colorful')
+
+        pygment_html = highlight(self.build_query(), SqlLexer(), formatter)
+        style_html = """
+        <style>
+        {pygments_css}
+        </style>
+        """.format(pygments_css=formatter.get_style_defs())
+
+        return style_html + pygment_html
+
+class SQLStorageInterface(StorageInterface):
+    storage_name = 'sql'
+    extension = 'sql'
+    expose_on_leaf = ['query']
+    required_metadata = []
 
     def load(self):
         with LockFile(self.lock_file):
@@ -658,21 +709,55 @@ WHERE
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        store_dict = dict(obj._asdict())
+        store_dict = dict(obj.asdict())
         with LockFile(self.lock_file):
             with open(self.path, mode='w') as f:
                 json.dump(store_dict, f)
 
             self.write_metadata(obj=obj, **md_kwargs)
 
-    def query(self, cxn):
+    def query(self, cxn, **parameters):
         if not hasattr(cxn, 'query'):
             msg = 'Argument cxn must have a query method'
             raise ValueError(msg)
 
-        q = SQLStorageInterface.build_query(self.load())
+        q = self.load().build_query(**parameters)
+        #q = SQLStorageInterface.build_query(self.load())
         return cxn.query(q)
 
+    def _repr_html_(self):
+        md = self.read_metadata()
+
+        basic_descrip = StorageInterface._build_html_body_(md)
+        #sql_txt = SQLStorageInterface.build_query(self.load())
+        sql_txt = self.load().build_query()
+
+        from pygments import highlight
+        from pygments.lexers import SqlLexer
+        from pygments.formatters import HtmlFormatter
+        formatter = HtmlFormatter(style='colorful')
+        pygment_html = highlight(sql_txt, SqlLexer(), formatter)
+        style_html = """
+        <style>
+        {pygments_css}
+        </style>
+        """.format(pygments_css=formatter.get_style_defs())
+
+        div_template = """
+        <div style="width: 80%;">
+            <div style="float:left; width: 40%">
+                {basic_description}
+            </div>
+            <div style="float:right;">
+                {sql_txt}
+            </div>
+        </div>
+        """.format(basic_description=basic_descrip,
+                   sql_txt=style_html + pygment_html)
+
+        html_str = """<h2> {name} </h2>""".format(name=self.name)
+        html_str += div_template
+        return html_str
 
 #######
 

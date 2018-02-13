@@ -409,6 +409,28 @@ class InteractiveDataRepo(unittest.TestCase):
         cxn = CXN(query=query)
         rt.subrepo_a.query_name_and_age.query(cxn)
 
+    def test_sql_parameters(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('subrepo_a').save('str object', name='some_data',
+                                    comments='something to search for')
+
+        sql_obj = idt.SQL(select_statement='id, name, age',
+                          from_statement='db.table',
+                          where_statement='age > {age_minimum}',
+                          query_parameters=dict(age_minimum=0))
+
+        rt.subrepo_a.save(sql_obj,
+                          name='query_name_and_age')
+
+        q = sql_obj.build_query()
+        self.assertTrue('age_minimum' not in q)
+        self.assertTrue('age > 0' in q)
+
+        q = sql_obj.build_query(age_minimum=10)
+        self.assertTrue('age_minimum' not in q)
+        self.assertTrue('age > 10' in q)
+
+
     def test_interface_registration(self):
         # TODO: This test leaves artifacts that may impact other tests
         # as it registers a new interface. Consider wiping before after tests
