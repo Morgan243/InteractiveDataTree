@@ -430,7 +430,6 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertTrue('age_minimum' not in q)
         self.assertTrue('age > 10' in q)
 
-
     def test_interface_registration(self):
         # TODO: This test leaves artifacts that may impact other tests
         # as it registers a new interface. Consider wiping before after tests
@@ -453,6 +452,43 @@ class InteractiveDataRepo(unittest.TestCase):
         md = lvl1.foobar.read_metadata()
         self.assertIsInstance(md['other_data'], idt.StorageInterface)
         self.assertEqual(md['other_data'], lvl1.barfoo.pickle)
+
+    def test_move_object(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+        rt.lvl1.mkrepo('lvl2')
+        t_str = 'foo bar'
+        rt.lvl1.save(t_str, name='just_a_string')
+
+        orig_p = rt.lvl1.just_a_string.pickle.path
+        self.assertTrue(os.path.isfile(orig_p))
+        self.assertTrue(hasattr(rt.lvl1, 'just_a_string'))
+        self.assertTrue(not hasattr(rt.lvl1.lvl2, 'just_a_string'))
+        rt.lvl1.move('just_a_string', rt.lvl1.lvl2, author='unittest')
+        self.assertTrue(not os.path.isfile(orig_p))
+        self.assertTrue(not hasattr(rt.lvl1, 'just_a_string'))
+        self.assertTrue(hasattr(rt.lvl1.lvl2, 'just_a_string'))
+
+    def test_remove_empty_repo(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+        rt.lvl1.mkrepo('lvl2')
+        rt.lvl1.mkrepo('lvl2a')
+        t_str = 'foo bar'
+        rt.lvl1.save(t_str, name='just_a_string')
+
+        r_dir = rt.lvl1.lvl2a.idr_prop['repo_root']
+        self.assertTrue(os.path.isdir(r_dir))
+        rt.lvl1.lvl2a.rmrepo()
+        self.assertTrue(not hasattr(rt.lvl1, 'lvl2a'))
+        self.assertTrue(not os.path.isdir(r_dir))
+
+        with self.assertRaises(ValueError):
+            rt.lvl1.rmrepo()
+
+    def test_name_conflict(self):
+        # TODO: Make sure that the name doesn't conflict with RepoTree properties
+        pass
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

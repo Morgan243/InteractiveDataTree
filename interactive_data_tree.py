@@ -1,4 +1,5 @@
 # Author: Morgan Stuart
+import shutil
 import abc
 import string
 import json
@@ -192,6 +193,10 @@ class StorageInterface(object):
         repos = self.parent_leaf.parent_repo.get_parent_repo_names()
         repos[0] = 'ROOT'
         return ".".join(repos + [self.parent_leaf.name, self.storage_name])
+
+    def get_associated_files_and_locks(self):
+        return [(self.path, self.lock_file),
+                (self.md_path, self.lock_md_file)]
 
     @classmethod
     def get_missing_metadata_fields(cls, md):
@@ -469,6 +474,10 @@ class HDFStorageInterface(StorageInterface):
 
         self.write_metadata(obj=obj, **md_kwargs)
 
+    # TODO: There are some bugs here for certain dataframe, some possibly related issues:
+    # https://github.com/pandas-dev/pandas/pull/13267
+    # https://github.com/pandas-dev/pandas/issues/11188
+    # https://github.com/pandas-dev/pandas/issues/14568
     def sample(self, n=5):
         """
         [NOT A RANDOM SAMPLE] Fetch only the first N samples from
@@ -773,7 +782,8 @@ type_storage_lookup = dict()
 storage_type_priority_order = list()
 storage_type_priority_map = dict()
 
-def register_storage_interface(interface_class, name, priority=None, types=None):
+def register_storage_interface(interface_class, name,
+                               priority=None, types=None):
     global storage_type_priority_map
     global storage_type_priority_order
     global type_storage_lookup
@@ -1033,7 +1043,6 @@ class RepoLeaf(object):
             raise ValueError(msg)
 
         # Construct the filesystem path using a typed extension
-        #store_int = storage_interfaces[storage_type](self.save_path, name=self.name)
         store_int = storage_interfaces[storage_type](parent_leaf=self)
 
         # Double Check - file exists there or file is registered in memory
@@ -1102,6 +1111,54 @@ class RepoLeaf(object):
                                                storage_type=storage_type)
         self.parent_repo._remove_from_index(self, storage_type=storage_type)
         self.parent_repo.refresh()
+
+    def move(self, tree, author):
+        """
+        Move this leaf to RepoTree provided as the 'tree' argument.
+        The underlying file contents are moved on the filesystem,
+        the index is updated, and the tree is refreshed
+
+        Parameters
+        ----------
+        tree : RepoTree object
+            Destination repo location as a RepoTree object
+        author: string
+            User/system performing the action
+
+        Returns
+        -------
+            None
+        """
+
+        if self.name in tree.list(list_repos=False):
+            msg = ("Repo '%s' already has a leaf with name '%s'"
+                   % (tree.name, self.name))
+            raise ValueError(msg)
+
+        new_base_p = tree.idr_prop['repo_root']
+
+        for ty, si in self.type_to_storage_interface_map.items():
+            files_and_locks = si.get_associated_files_and_locks()
+            # Remove all files using associated lock files
+            for f, l_f in files_and_locks:
+                # Will break if lock file is not valid...
+                with LockFile(l_f):
+                    fname = os.path.split(f)[-1]
+                    new_p = os.path.join(new_base_p, fname)
+                    shutil.move(f, new_p)
+
+            # Remove storage type from the index
+            self.parent_repo._remove_from_index(self,
+                                                storage_type=ty)
+
+        self.parent_repo.refresh()
+        tree.refresh()
+
+        self.parent_repo._append_to_master_log(operation='move', leaf=self,
+                                               author=author,
+                                               storage_type=None)
+
+        self.parent_repo._add_to_index(tree[self.name], storage_type=None)
 
     def load(self, storage_type=None):
         """
@@ -1283,11 +1340,11 @@ Sub-Repositories
         repos_html = """
         <h4>Sub Repos</h4>
         %s
-        """ % "\n".join("<li>%s</li>" % rt for rt in self.__sub_repo_table.keys())
+        """ % "\n".join("<li>%s</li>" % rt for rt in sorted(self.__sub_repo_table.keys()))
         objects_html = """
         <h4>Objects</h4>
         %s
-        """ % "\n".join("<li>%s</li>" % rt for rt in self.__repo_object_table.keys())
+        """ % "\n".join("<li>%s</li>" % rt for rt in sorted(self.__repo_object_table.keys()))
 
         if self.idr_prop['parent_repo'] is not None:
             parent_repo_str = "->".join(['Root']
@@ -1337,8 +1394,14 @@ Sub-Repositories
 
     def _remove_from_index(self, leaf, storage_type):
         master_index = self._load_master_index()
-        ref = leaf.reference(storage_type=storage_type)
-        del master_index[ref]
+        if storage_type is not None:
+            ref = leaf.reference(storage_type=storage_type)
+            del master_index[ref]
+        else:
+            for st in leaf.type_to_storage_interface_map.keys():
+                ref = leaf.reference(storage_type=st)
+                del master_index[ref]
+
         self._write_master_index(master_index)
 
     def _add_to_index(self, leaf, storage_type):
@@ -1350,8 +1413,13 @@ Sub-Repositories
         #   - Each type has its own index, so use storage type to distinguish
         vec_map = leaf.get_vector_representation_map()
         master_index = self._load_master_index()
-        ref = leaf.reference(storage_type=storage_type)
-        master_index[ref] = vec_map[storage_type]
+        if storage_type is not None:
+            ref = leaf.reference(storage_type=storage_type)
+            master_index[ref] = vec_map[storage_type]
+        else:
+            for st, vec in vec_map.items():
+                ref = leaf.reference(storage_type=st)
+                master_index[ref] = vec
 
         self._write_master_index(master_index)
 
@@ -1484,6 +1552,32 @@ Sub-Repositories
 
         self.__update_doc_str()
 
+    def move(self, name, tree, author):
+        """
+        Move an object to RepoTree provided as the 'tree' argument.
+        The underlying file contents are moved on the filesystem,
+        the index is updated, and the tree is refreshed
+
+        Parameters
+        ----------
+        name : string
+            Name of repo object to move
+        tree : RepoTree object
+            Destination repo location as a RepoTree object
+        author: string
+            User/system performing the action
+
+        Returns
+        -------
+            None
+        """
+
+        if name in tree.list(list_repos=False):
+            msg = "Repo '%s' already has a leaf with name '%s'" % (tree.name, name)
+            raise ValueError(msg)
+
+        self.__repo_object_table[name].move(tree, author=author)
+
     def add_obj_leaf(self, leaf):
         self.__repo_object_table[leaf.name] = leaf
 
@@ -1568,7 +1662,12 @@ Sub-Repositories
         if name not in self.__repo_object_table:
             raise ValueError("Unknown object %s in repo %s" % (name, self.name))
 
-        return self.__repo_object_table[name].load()
+        #return self.__repo_object_table[name].load()
+        st = self.__repo_object_table[name]
+        if storage_type is not None:
+            st = st[storage_type]
+        return st.load()
+
 
     def mkrepo(self, name, err_on_exists=False):
         """
@@ -1601,6 +1700,24 @@ Sub-Repositories
         self._append_to_master_log(operation='mkrepo')
 
         return self.__sub_repo_table[name]
+
+    def rmrepo(self):
+        """
+        Removes an empty repo
+
+        Returns
+        -------
+            None
+        """
+        obj_cnt = len(self.__repo_object_table)
+        rep_cnt = len(self.__sub_repo_table)
+        if (obj_cnt > 0) or (rep_cnt > 0):
+            msg = 'This repo has items in it (sub-repos or objects),'
+            msg += " only emtpy repositories can be removed"
+            raise ValueError(msg)
+
+        os.rmdir(self.idr_prop['repo_root'])
+        self.idr_prop['parent_repo'].refresh()
 
     def list(self, list_repos=True, list_objs=True, verbose=False):
         """
