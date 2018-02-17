@@ -1719,6 +1719,20 @@ Sub-Repositories
         os.rmdir(self.idr_prop['repo_root'])
         self.idr_prop['parent_repo'].refresh()
 
+    def iterobjs(self):
+        #for k in sorted(self.__repo_object_table.keys()):
+        #    yield self.__repo_object_table[k].load()
+        for l in self.iterleaves():
+            yield l.load()
+
+    def iterleaves(self):
+        for k in sorted(self.__repo_object_table.keys()):
+            yield self.__repo_object_table[k]
+
+    def iterrepos(self):
+        for k in sorted(self.__sub_repo_table.keys()):
+            yield self.__sub_repo_table[k]
+
     def list(self, list_repos=True, list_objs=True, verbose=False):
         """
         List items inside a repository

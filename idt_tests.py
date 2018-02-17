@@ -490,6 +490,23 @@ class InteractiveDataRepo(unittest.TestCase):
         # TODO: Make sure that the name doesn't conflict with RepoTree properties
         pass
 
+    def test_iterobjs(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+
+        objs_and_names = [
+            ('foo', 'string_a'),
+            ('bar', 'string_b'),
+            ('foobar', 'string_c'),
+        ]
+
+        for o, n in objs_and_names:
+            rt.lvl1.save(o, name=n)
+
+        for i, tr_o in enumerate(rt.lvl1.iterobjs()):
+            self.assertEqual(tr_o, objs_and_names[i][0])
+
+
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
 # - Basic search functionality off of tree
