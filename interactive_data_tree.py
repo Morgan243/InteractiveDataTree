@@ -979,7 +979,7 @@ class RepoLeaf(object):
         self.__update_doc_str()
         return self
 
-    def read_metadata(self, storage_type=None, most_recent=True):
+    def read_metadata(self, storage_type=None, **kwargs):
         """
         Read entire metadata history from storage. Each
         storage interface saves it's own metadata, so
@@ -999,12 +999,12 @@ class RepoLeaf(object):
             if storage_type not in self.type_to_storage_interface_map:
                 raise ValueError("Type %s does not exist for %s" % (storage_type, self.name))
 
-            md = self.type_to_storage_interface_map[storage_type].read_metadata(most_recent=most_recent)
+            md = self.type_to_storage_interface_map[storage_type].read_metadata(**kwargs)
         else:
             md = None
             for po in storage_type_priority_order:
                 if po in self.type_to_storage_interface_map:
-                    md = self.type_to_storage_interface_map[po].read_metadata(most_recent=most_recent)
+                    md = self.type_to_storage_interface_map[po].read_metadata(**kwargs)
                     break
         return md
 
@@ -1112,6 +1112,41 @@ class RepoLeaf(object):
         self.parent_repo._remove_from_index(self, storage_type=storage_type)
         self.parent_repo.refresh()
 
+    def rename(self, new_name, author):
+        if not isidentifier(new_name):
+            msg = "New name must be a valid python identifier, got '%s'" % new_name
+            raise ValueError(msg)
+
+        if new_name in self.parent_repo.list(list_repos=False):
+            msg = ("Repo '%s' already has a leaf with name '%s'"
+                   % (self.parent_repo.name, new_name))
+            raise ValueError(msg)
+
+        orig_name = self.name
+        base_p = self.parent_repo.idr_prop['repo_root']
+        for ty, si in self.type_to_storage_interface_map.items():
+            files_and_locks = si.get_associated_files_and_locks()
+            # Remove all files using associated lock files
+            for f, l_f in files_and_locks:
+                # Will break if lock file is not valid...
+                with LockFile(l_f):
+                    fname = os.path.split(f)[-1]
+                    new_fname = fname.replace(orig_name, new_name)
+                    new_p = os.path.join(base_p, new_fname)
+                    shutil.move(f, new_p)
+
+            # Remove storage type from the index
+            self.parent_repo._remove_from_index(self,
+                                                storage_type=ty)
+
+        self.parent_repo.refresh()
+
+        self.parent_repo._append_to_master_log(operation='rename', leaf=self,
+                                               author=author,
+                                               storage_type=None)
+
+        self.parent_repo._add_to_index(self, storage_type=None)
+
     def move(self, tree, author):
         """
         Move this leaf to RepoTree provided as the 'tree' argument.
@@ -1218,6 +1253,9 @@ class RepoTree(object):
         self.refresh()
 
     def __getitem__(self, item):
+        if isinstance(item, list):
+            return [self[_item] for _item in item]
+
         in_repos = item in self.__sub_repo_table
         in_objs = item in self.__repo_object_table
 
@@ -1392,15 +1430,24 @@ Sub-Repositories
                        tags='idt_index', auto_overwrite=True,
                        verbose=False)
 
-    def _remove_from_index(self, leaf, storage_type):
+    def _remove_from_index(self, leaf, storage_type, missing_err='ignore'):
+        if missing_err not in ('ignore', 'raise'):
+            raise ValueError("Unknown value for param missing_err, expected one of 'raise', 'ignore'")
+
         master_index = self._load_master_index()
         if storage_type is not None:
             ref = leaf.reference(storage_type=storage_type)
-            del master_index[ref]
+            if ref in master_index:
+                del master_index[ref]
+            elif missing_err == 'raise':
+                raise ValueError("'%s' is not in index" % ref)
         else:
             for st in leaf.type_to_storage_interface_map.keys():
                 ref = leaf.reference(storage_type=st)
-                del master_index[ref]
+                if ref in master_index:
+                    del master_index[ref]
+                elif missing_err == 'raise':
+                    raise ValueError("'%s' is not in index" % ref)
 
         self._write_master_index(master_index)
 
@@ -1764,9 +1811,11 @@ Sub-Repositories
             raise ValueError("List repos and list objs set to False - nothing to do")
 
     def from_reference(self, ref):
+        # If the reference is already a leaf
         if isinstance(ref, RepoLeaf):
             ref = ref._get_highest_priority_si()
 
+        # Reference is already a storage interface
         if isinstance(ref, StorageInterface):
             ref_root = ref.parent_leaf.parent_repo.get_root()
             this_root = self.get_root()
@@ -1789,7 +1838,10 @@ Sub-Repositories
         curr_node = root_repo
         # Slice: First is root, last is type
         for n in nodes[1:]:
-            curr_node = curr_node[n]
+            try:
+                curr_node = curr_node[n]
+            except KeyError as ke:
+                return None
 
         return curr_node
 

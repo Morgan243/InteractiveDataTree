@@ -453,6 +453,11 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertIsInstance(md['other_data'], idt.StorageInterface)
         self.assertEqual(md['other_data'], lvl1.barfoo.pickle)
 
+        # Now, delete the referenced data
+        lvl1.barfoo.delete(author='unittests')
+        self.assertEqual(lvl1.foobar.load(), 'some string data')
+        lvl1.foobar.read_metadata()
+
     def test_move_object(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
@@ -506,6 +511,26 @@ class InteractiveDataRepo(unittest.TestCase):
         for i, tr_o in enumerate(rt.lvl1.iterobjs()):
             self.assertEqual(tr_o, objs_and_names[i][0])
 
+    def test_rename(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+        rt.lvl1.mkrepo('lvl2')
+        t_str = 'foo bar'
+        rt.lvl1.save(t_str, name='just_a_string')
+
+        orig_p = rt.lvl1.just_a_string.pickle.path
+        self.assertTrue(os.path.isfile(orig_p))
+        self.assertTrue(hasattr(rt.lvl1, 'just_a_string'))
+        self.assertTrue(not hasattr(rt.lvl1.lvl2, 'just_a_string'))
+        #rt.lvl1.move('just_a_string', rt.lvl1.lvl2, author='unittest')
+        rt.lvl1.just_a_string.rename('really_important_string', author='unittest')
+        self.assertTrue(not os.path.isfile(orig_p))
+        self.assertTrue(not hasattr(rt.lvl1, 'just_a_string'))
+        self.assertTrue(hasattr(rt.lvl1, 'really_important_string'))
+
+    def test_unknown_tree_reference_in_metadata(self):
+        # Should probably do this in the reference unit test
+        pass
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
