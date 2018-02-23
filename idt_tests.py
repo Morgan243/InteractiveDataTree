@@ -103,14 +103,14 @@ class InteractiveDataRepo(unittest.TestCase):
         t_str = 'foo bar'
         rt.lvl1.save(t_str, name='just_a_string')
 
-        repos = rt.lvl1.list(list_objs=False)
+        repos = rt.lvl1.list(list_leaves=False)
         self.assertEqual(['lvl2'], repos)
 
         objs = rt.lvl1.list(list_repos=False)
         self.assertEqual(['just_a_string'], objs)
 
         with self.assertRaises(ValueError):
-            rt.lvl1.list(list_objs=False, list_repos=False)
+            rt.lvl1.list(list_leaves=False, list_repos=False)
 
     def test_pandas_storage(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -481,7 +481,7 @@ class InteractiveDataRepo(unittest.TestCase):
 
         # Check that the reference changed
         md = rt.lvl1.test_referrer.read_metadata()
-        t = idt.reference_to_leaf(rt, md['other_data'])
+        t = rt.from_reference(md['other_data'])
         self.assertEqual(t, rt.lvl1.lvl2.just_a_string.pickle)
         self.assertEqual(len(md['references']), 1)
 
@@ -549,7 +549,7 @@ class InteractiveDataRepo(unittest.TestCase):
 
         # Check that the reference changed
         md = rt.lvl1.test_referrer.read_metadata()
-        t = idt.reference_to_leaf(rt, md['other_data'])
+        t = rt.from_reference(md['other_data'])
         self.assertEqual(t, rt.lvl1.really_important_string.pickle)
         self.assertEqual(len(md['references']), 1)
 

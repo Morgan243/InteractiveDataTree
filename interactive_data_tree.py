@@ -1,4 +1,5 @@
 # Author: Morgan Stuart
+import math
 import shutil
 import abc
 import string
@@ -75,16 +76,8 @@ def is_valid_uri(obj):
 def message_user(txt):
     print(txt)
 
-# idt.set_local_var_to_notebook_name(var_name="""idt.shared_metadata[\\'notebook_name\\']""")
-def set_local_var_to_notebook_name(var_name='NOTEBOOK_NAME'):
-    from IPython import get_ipython
-    ipython = get_ipython()
-
-    js = """IPython.notebook.kernel.execute('%s = ' + '"' + IPython.notebook.notebook_name + '"')""" % var_name
-    ipython.run_cell_magic('javascript', '', js)
-
 def norm_vector(v):
-    return sum(_v**2.0 for _v in v)
+    return math.sqrt(sum(_v**2.0 for _v in v))
 
 # Same as dot
 def inner_prod_vector(a, b):
@@ -96,8 +89,8 @@ def cosine_sim(a, b):
     sim = inner_prod_vector(a, b)/(na * nb)
     return sim
 
+remove_chars = set(""",.!@#$%^&*()[]{}/\\`~-+|;:' \t\n\r""")
 def clean_token(tk):
-    remove_chars = set(""",.!@#$%^&*()[]{}/\\`~-+|;:' \t\n\r""")
     return ''.join(c for c in tk if c not in remove_chars)
 
 def basic_tokenizer(str_data, ngram_range=(1, 1)):
@@ -351,7 +344,6 @@ class StorageInterface(object):
             with open(self.md_path, 'w')  as f:
                 json.dump(md_hist, f)
 
-
     def add_referrer(self, referrer_uri, *referrer_md_keys):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
@@ -455,7 +447,8 @@ class StorageInterface(object):
             #current_refs = most_recent_md.get('references', dict())
             this_uri = self.reference()
             for uri, keys in references.items():
-                l = reference_to_leaf(self.parent_leaf.parent_repo, uri)
+                #l = reference_to_leaf(self.parent_leaf.parent_repo, uri)
+                l = self.parent_leaf.parent_repo.from_reference(uri)
 
                 if isinstance(l, StorageInterface):
                     l.add_referrer(this_uri, *keys)
@@ -568,6 +561,20 @@ class StorageInterface(object):
             html_str += add_md
 
         return html_str
+
+    @staticmethod
+    def _get_two_column_div_template():
+        div_template = """
+        <div style="width: 80%;">
+            <div style="float:left; width: 50%; height:100%; overflow: auto">
+            {left_column}
+            </div>
+            <div style="float:right; width:49%; height: 100%; overflow: auto; margin-left:1%">
+            {right_column}
+            </div>
+        </div>
+        """
+        return div_template
 
     def _repr_html_(self):
         md = self.read_metadata()
@@ -700,17 +707,9 @@ class HDFStorageInterface(StorageInterface):
                    ix_head=", ".join(md.get('index_head', [])))
 
 
-        div_template = """
-        <div style="width: 80%;">
-            <div style="float:left; width: 40%">
-            {basic_description}
-            </div>
-            <div style="float:right;">
-            {extra_description}
-            </div>
-        </div>
-        """.format(basic_description=basic_descrip,
-                   extra_description=extra_descrip)
+        div_template = StorageInterface._get_two_column_div_template()
+        div_template = div_template.format(left_column=basic_descrip,
+                                           right_column=extra_descrip)
 
         html_str = """<h2> {name} </h2>""".format(name=self.name)
         html_str += div_template
@@ -844,7 +843,8 @@ WHERE
         </style>
         """.format(pygments_css=formatter.get_style_defs())
 
-        return style_html + pygment_html
+        html = style_html + pygment_html
+        return html
 
 class SQLStorageInterface(StorageInterface):
     storage_name = 'sql'
@@ -907,17 +907,9 @@ class SQLStorageInterface(StorageInterface):
         </style>
         """.format(pygments_css=formatter.get_style_defs())
 
-        div_template = """
-        <div style="width: 80%;">
-            <div style="float:left; width: 40%">
-                {basic_description}
-            </div>
-            <div style="float:right;">
-                {sql_txt}
-            </div>
-        </div>
-        """.format(basic_description=basic_descrip,
-                   sql_txt=style_html + pygment_html)
+        div_template = StorageInterface._get_two_column_div_template()
+        div_template = div_template.format(left_column=basic_descrip,
+                                           right_column=style_html + pygment_html)
 
         html_str = """<h2> {name} </h2>""".format(name=self.name)
         html_str += div_template
@@ -986,7 +978,7 @@ register_storage_interface(HDFStorageInterface, 'hdf', 0,
                            types=[pd.DataFrame, pd.Series])
 register_storage_interface(StorageInterface, 'pickle', 1)
 register_storage_interface(ModelStorageInterface, 'model', 2)
-register_storage_interface(SQLStorageInterface, 'sql', 2,
+register_storage_interface(SQLStorageInterface, 'sql', 3,
                            types=[SQL])
 
 
@@ -1065,6 +1057,9 @@ class RepoLeaf(object):
 
     def _repr_html_(self):
         return self._get_highest_priority_si()._repr_html_()
+
+    def items(self):
+        return self.type_to_storage_interface_map.items()
 
     def get_vector_representation_map(self):
         self.refresh()
@@ -1404,7 +1399,8 @@ class RepoLeaf(object):
             for referrer_uri, keys in referrers.items():
                 # 'l' is a leaf that references this leaf
                 # -> Since this leaf is moving, we must update l's references
-                l = reference_to_leaf(self.parent_repo, referrer_uri)
+                #l = reference_to_leaf(self.parent_repo, referrer_uri)
+                l = self.parent_repo.from_reference(referrer_uri)
                 assert isinstance(l, StorageInterface)
                 l.remove_reference(previous_si_uris[ty], *keys)
                 if not delete:
@@ -1414,7 +1410,8 @@ class RepoLeaf(object):
             for reference_uri, keys in references.items():
                 # 'l' is a leaf that this leaf references
                 # -> Since this leaf is moving, we must update l's referrers
-                l = reference_to_leaf(self.parent_repo, reference_uri)
+                #l = reference_to_leaf(self.parent_repo, reference_uri)
+                l = self.parent_repo.from_reference(reference_uri)
                 l.remove_referrer(previous_si_uris[ty], *keys)
                 if not delete:
                     l.add_referrer(new_si_uri, *keys)
@@ -1493,6 +1490,10 @@ class RepoTree(object):
             dot_path = ".".join(self.get_parent_repo_names())
             dot_path = "root" if len(dot_path) == 0 else dot_path
             raise AttributeError("'%s' is not under repo %s" % (item, dot_path))
+
+    def __len__(self):
+        return (len(self.__repo_object_table)
+                + len(self.__repo_object_table))
 
     def __update_doc_str(self):
         docs = "Repository Name: " + self.name + "\n\n"
@@ -1577,22 +1578,24 @@ Sub-Repositories
         repos_html = """
         <h4>Sub Repos</h4>
         %s
-        """ % "\n".join("<li>%s</li>" % rt for rt in sorted(self.__sub_repo_table.keys()))
+        """ % "\n".join("<li>%s [%d]</li>" % (rt, len(self.__sub_repo_table[rt]))
+                        for rt in sorted(self.__sub_repo_table.keys()))
         objects_html = """
         <h4>Objects</h4>
         %s
-        """ % "\n".join("<li>%s</li>" % rt for rt in sorted(self.__repo_object_table.keys()))
+        """ % "\n".join("<li>%s [%s]</li>" %
+                        (rt, ",".join(sorted(ty for ty, si in self.__repo_object_table[rt].items())))
+                        for rt in sorted(self.__repo_object_table.keys()))
 
         if self.idr_prop['parent_repo'] is not None:
             parent_repo_str = "->".join(['Root']
                                         + self.get_parent_repo_names()[1:]
                                         + [self.name])
-            #parent_repo_str += "-> %s" % self.name
         else:
             parent_repo_str = "Root (%s)" % self.name
         html = """
         {repo_parent_header}
-        <div style="width: 30%;">
+        <div style="width: 35%;">
             <div style="float:left; width: 50%">
             {repos_list}
             </div>
@@ -1978,7 +1981,7 @@ Sub-Repositories
         for k in sorted(self.__sub_repo_table.keys()):
             yield self.__sub_repo_table[k]
 
-    def list(self, list_repos=True, list_objs=True, verbose=False):
+    def list(self, list_repos=True, list_leaves=True):
         """
         List items inside a repository
 
@@ -1986,7 +1989,7 @@ Sub-Repositories
         ----------
         list_repos : bool (default=True)
             Include repositories in the listing
-        list_objs : bool (default=True)
+        list_leaves : bool (default=True)
             Include objects in the listing
         verbose : bool (default=False)
             Unused
@@ -1999,14 +2002,20 @@ Sub-Repositories
         objs = list(sorted(self.__repo_object_table.keys()))
         repos = list(sorted(self.__sub_repo_table.keys()))
 
-        if list_repos and list_objs:
+        if list_repos and list_leaves:
             return repos, objs
         elif list_repos:
             return repos
-        elif list_objs:
+        elif list_leaves:
             return objs
         else:
             raise ValueError("List repos and list objs set to False - nothing to do")
+
+    def list_repos(self):
+        return self.list(list_repos=True, list_leaves=False)
+
+    def list_leaves(self):
+        return self.list(list_repos=False, list_leaves=True)
 
     def from_reference(self, ref):
         # If the reference is already a leaf
