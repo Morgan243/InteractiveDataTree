@@ -399,14 +399,6 @@ class StorageInterface(object):
             with open(self.md_path, 'w')  as f:
                 json.dump(md_hist, f)
 
-    # update references, not referrers
-    # - Referrers lets us track back to the referencers, who we need to change
-    #   their references if the referred is being moved
-    def update_referrer(self, orig_referrer_uri, new_referrer_uri,
-                        orig_referrer_md_key, new_referrer_md_key):
-       self.remove_referrer(orig_referrer_uri, orig_referrer_md_key)
-       self.add_referrer(new_referrer_uri, new_referrer_md_key)
-
     def write_metadata(self, obj=None, **md_kwargs):
         """
         Locks metadata file, reads current contents, and appends
@@ -1423,9 +1415,9 @@ class RepoLeaf(object):
                 # 'l' is a leaf that this leaf references
                 # -> Since this leaf is moving, we must update l's referrers
                 l = reference_to_leaf(self.parent_repo, reference_uri)
-                l.remove_referrer(referrer_uri=previous_si_uris[ty], *keys)
+                l.remove_referrer(previous_si_uris[ty], *keys)
                 if not delete:
-                    l.add_referrer(referrer_uri=new_si_uri, *keys)
+                    l.add_referrer(new_si_uri, *keys)
 
 
 class RepoTree(object):

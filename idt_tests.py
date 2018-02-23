@@ -557,6 +557,37 @@ class InteractiveDataRepo(unittest.TestCase):
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer)
         self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
 
+        ### Rename the referrer
+        rt.lvl1.test_referrer.rename('test_referrer_renamed', author='unittest')
+        md2 = rt.lvl1.really_important_string.read_metadata()
+        uri = idt.leaf_to_reference(rt.lvl1.test_referrer_renamed)
+        self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
+
+
+    def test_missing_metadata(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+
+        ###
+        idt.StorageInterface.get_missing_metadata_fields(dict())
+        with self.assertRaises(ValueError):
+            idt.StorageInterface.get_missing_metadata_fields(list())
+
+        idt.StorageInterface.required_metadata = None
+        m_md = idt.StorageInterface.get_missing_metadata_fields(dict())
+        self.assertTrue(len(m_md) == 0)
+
+        idt.StorageInterface.required_metadata = 'foobar'
+        m_md = idt.StorageInterface.get_missing_metadata_fields(dict())
+        self.assertTrue(len(m_md) == 1)
+
+        # Ensure that missing metadata fields throw an exception
+        with self.assertRaises(ValueError):
+            rt.lvl1.save('nothing', ['some+data'], storage_type='model')
+
+        # Reset
+        idt.StorageInterface.required_metadata = list()
+
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
 # - Basic search functionality off of tree
