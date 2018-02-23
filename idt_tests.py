@@ -73,11 +73,14 @@ class InteractiveDataRepo(unittest.TestCase):
 
         # Add another obj to test that a deletion hits only the target object
         t_obj = 'some string2'
-        rep_tree.save(t_obj, 'test_string_num_2')
+        rep_tree.save(t_obj, 'test_string_num_2',
+                      other_data=rep_tree.test_string)
         rep_tree.test_string.delete(author='unittests')
         self.assertTrue(not hasattr(rep_tree, 'test_string'))
         self.assertTrue(hasattr(rep_tree, 'test_string_num_2'))
         rep_tree.test_string_num_2.load()
+        md = rep_tree.test_string_num_2.read_metadata()
+        self.assertTrue(md['other_data'] is None)
 
         rep_tree.delete(author='unittests', name='test_string_num_2')
         self.assertTrue(not hasattr(rep_tree, 'test_string_num_2'))
@@ -456,7 +459,7 @@ class InteractiveDataRepo(unittest.TestCase):
         # Now, delete the referenced data
         lvl1.barfoo.delete(author='unittests')
         self.assertEqual(lvl1.foobar.load(), 'some string data')
-        lvl1.foobar.read_metadata()
+        self.assertIsNone(lvl1.foobar.read_metadata()['other_data'])
 
     def test_move_object(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -464,6 +467,8 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.lvl1.mkrepo('lvl2')
         t_str = 'foo bar'
         rt.lvl1.save(t_str, name='just_a_string')
+        rt.lvl1.save('barfoo', name='test_referrer',
+                     other_data=rt.lvl1.just_a_string)
 
         orig_p = rt.lvl1.just_a_string.pickle.path
         self.assertTrue(os.path.isfile(orig_p))
@@ -473,6 +478,16 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertTrue(not os.path.isfile(orig_p))
         self.assertTrue(not hasattr(rt.lvl1, 'just_a_string'))
         self.assertTrue(hasattr(rt.lvl1.lvl2, 'just_a_string'))
+
+        # Check that the reference changed
+        md = rt.lvl1.test_referrer.read_metadata()
+        t = idt.reference_to_leaf(rt, md['other_data'])
+        self.assertEqual(t, rt.lvl1.lvl2.just_a_string.pickle)
+        self.assertEqual(len(md['references']), 1)
+
+        md2 = rt.lvl1.lvl2.just_a_string.read_metadata()
+        uri = idt.leaf_to_reference(rt.lvl1.test_referrer)
+        self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
 
     def test_remove_empty_repo(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -517,20 +532,30 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.lvl1.mkrepo('lvl2')
         t_str = 'foo bar'
         rt.lvl1.save(t_str, name='just_a_string')
+        rt.lvl1.save('barfoo', name='test_referrer',
+                     other_data=rt.lvl1.just_a_string)
+
 
         orig_p = rt.lvl1.just_a_string.pickle.path
         self.assertTrue(os.path.isfile(orig_p))
         self.assertTrue(hasattr(rt.lvl1, 'just_a_string'))
         self.assertTrue(not hasattr(rt.lvl1.lvl2, 'just_a_string'))
-        #rt.lvl1.move('just_a_string', rt.lvl1.lvl2, author='unittest')
+        ####
         rt.lvl1.just_a_string.rename('really_important_string', author='unittest')
+        ####
         self.assertTrue(not os.path.isfile(orig_p))
         self.assertTrue(not hasattr(rt.lvl1, 'just_a_string'))
         self.assertTrue(hasattr(rt.lvl1, 'really_important_string'))
 
-    def test_unknown_tree_reference_in_metadata(self):
-        # Should probably do this in the reference unit test
-        pass
+        # Check that the reference changed
+        md = rt.lvl1.test_referrer.read_metadata()
+        t = idt.reference_to_leaf(rt, md['other_data'])
+        self.assertEqual(t, rt.lvl1.really_important_string.pickle)
+        self.assertEqual(len(md['references']), 1)
+
+        md2 = rt.lvl1.really_important_string.read_metadata()
+        uri = idt.leaf_to_reference(rt.lvl1.test_referrer)
+        self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
