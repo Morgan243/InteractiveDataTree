@@ -1131,6 +1131,7 @@ class RepoLeaf(object):
         # Delete types that are no longer present on the FS
         next_types = set(self.type_to_storage_interface_map.keys())
 
+        # Foreach item no longer present
         for t in (cur_types - next_types):
             si = cur_si_map[t]
             delattr(self, si.storage_name)
@@ -1140,6 +1141,7 @@ class RepoLeaf(object):
                     if hasattr(self, eol) and getattr(self, eol) == getattr(si, eol):
                        delattr(self, eol)
 
+        # Are there are types that need assignment
         if len(next_types) > 0:
             for t in next_types:
                 si = self.type_to_storage_interface_map[t]
@@ -2002,19 +2004,45 @@ Sub-Repositories
         self.idr_prop['parent_repo'].refresh()
 
     def iterobjs(self, progress_bar=True):
-        to_iter = self.iterleaves()
-        to_iter = show_progress(to_iter, total=len(self.__repo_object_table)) \
-                    if progress_bar else to_iter
+        to_iter = self.iterleaves(progress_bar)
         for l in to_iter:
             yield l.load()
 
-    def iterleaves(self):
-        for k in sorted(self.__repo_object_table.keys()):
-            yield self.__repo_object_table[k]
 
-    def iterrepos(self):
-        for k in sorted(self.__sub_repo_table.keys()):
-            yield self.__sub_repo_table[k]
+    def iterleaves(self, progress_bar=True):
+        to_iter = sorted(self.__repo_object_table.keys())
+        if progress_bar:
+            try:
+                from tqdm import tqdm
+                with tqdm(total=len(self.__repo_object_table)) as pbar:
+                    for k in to_iter:
+                        pbar.set_description(k)
+                        yield self.__repo_object_table[k]
+                        pbar.update(1)
+            except ImportError:
+                for k in to_iter:
+                    yield self.__repo_object_table[k]
+        else:
+            for k in to_iter:
+                yield self.__repo_object_table[k]
+
+
+    def iterrepos(self, progress_bar=True):
+        to_iter = sorted(self.__sub_repo_table.keys())
+        if progress_bar:
+            try:
+                from tqdm import tqdm
+                with tqdm(total=len(self.__sub_repo_table)) as pbar:
+                    for k in to_iter:
+                        pbar.set_description(k)
+                        yield self.__sub_repo_table[k]
+                        pbar.update(1)
+            except ImportError:
+                for k in to_iter:
+                    yield self.__sub_repo_table[k]
+        else:
+            for k in to_iter:
+                yield self.__sub_repo_table[k]
 
     def list(self, list_repos=True, list_leaves=True):
         """
