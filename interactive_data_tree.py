@@ -1475,6 +1475,13 @@ class RepoTree(object):
         self.__sub_repo_table = dict()
         self.refresh()
 
+    def __contains__(self, item):
+        try:
+            t = self[item]
+            return True
+        except KeyError as e:
+            return False
+
     def __getitem__(self, item):
         if isinstance(item, list):
             return [self[_item] for _item in item]
