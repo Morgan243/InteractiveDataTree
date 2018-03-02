@@ -221,7 +221,7 @@ class InteractiveDataRepo(unittest.TestCase):
 
         lvl1.save('some more data', name='barmoo',
                   other=lvl2.barfoo,
-                  references=lvl3.foobar)
+                  another=lvl3.foobar)
 
         ref_str = lvl3.foobar.reference()
         self.assertEqual(lvl3.foobar.pickle, rt.from_reference(ref_str))
@@ -563,7 +563,6 @@ class InteractiveDataRepo(unittest.TestCase):
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer_renamed)
         self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
 
-
     def test_missing_metadata(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1')
@@ -587,6 +586,14 @@ class InteractiveDataRepo(unittest.TestCase):
 
         # Reset
         idt.StorageInterface.required_metadata = list()
+
+    def test_reserved_keyword_error(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+
+        with self.assertRaises(ValueError):
+            rt.lvl1.save('foobar', name='barfoo',
+                        write_time='morning', obj_type='string')
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

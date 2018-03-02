@@ -44,7 +44,8 @@ idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_r
                   enable_queries=True)
 
 reserved_md_keywords = {'write_time', 'extra_metadata_keys',
-                        'obj_type', 'referrers', 'references'}
+                        'obj_type', 'referrers', 'references',
+                        'md_update_time'}
 
 shared_metadata = dict(notebook_name=None, author=None, project=None)
 base_master_log_entry = dict(repo_tree=None,
@@ -63,6 +64,15 @@ base_master_log_entry = dict(repo_tree=None,
 # - Enable references between objects
 #   - Simply store a set of dot paths in the metadata
 # - Log interface for easier adjustable verbosity and logging
+def show_progress(to_iter, **tqdm_kwargs):
+    try:
+        from tqdm import tqdm
+    except ImportError as e:
+        message_user("Install 'tqdm' for progress bars")
+        return to_iter
+
+    return tqdm(to_iter, **tqdm_kwargs)
+
 
 def is_valid_uri(obj):
     if not isinstance(obj, basestring):
@@ -410,6 +420,13 @@ class StorageInterface(object):
         None
         """
 
+        used_res_k = list(set(md_kwargs.keys()) & reserved_md_keywords)
+        if len(used_res_k) > 0:
+            msg = "Use of reserved keyword(s) is forbidden: "
+            msg += ", ".join(used_res_k)
+            raise ValueError(msg)
+
+        # builtin_metata
         references = dict()
         for k in md_kwargs.keys():
             # Overwrite leaf/URI to just URI
@@ -430,12 +447,13 @@ class StorageInterface(object):
 
         cls = self.__class__
         md_kwargs['write_time'] = datetime.now().strftime(idr_config['date_format'])
+        md_kwargs['md_update_time'] = md_kwargs['write_time']
         md_kwargs['extra_metadata_keys'] = list(set(md_kwargs.keys()) -
                                                  set(cls.required_metadata +
                                                      standard_metadata +
                                                      cls.interface_metadata))
         md_kwargs['references'] = references
-
+        #md_kwargs['_idt_md'] = idt_md
         with LockFile(self.lock_md_file):
             md = self.read_metadata(lock=False, most_recent=False,
                                     resolve_references=False)
@@ -462,8 +480,6 @@ class StorageInterface(object):
                     msg += ", ".join(keys)
                     raise ValueError(msg)
 
-
-
             # Remove key values that we already have stored (key AND value match)
             for k, v in most_recent_md.items():
                 if k in md_kwargs and v == md_kwargs[k]:
@@ -472,6 +488,13 @@ class StorageInterface(object):
             md.append(md_kwargs)
             with open(self.md_path, 'w') as f:
                 json.dump(md, f)
+
+    def update_metadata(self, **md_kwargs):
+        raise NotImplementedError("Update is not implemented yet :(")
+        with LockFile(self.lock_md_file):
+            all_md = self.read_metadata(lock=False,
+                                    most_recent=False, resolve_references=False)
+
 
     def read_metadata(self, lock=True, most_recent=True,
                       resolve_references=True):
@@ -1296,9 +1319,13 @@ class RepoLeaf(object):
                     new_p = os.path.join(base_p, new_fname)
                     shutil.move(f, new_p)
 
-            # Remove storage type from the index
-            self.parent_repo._remove_from_index(self,
-                                                storage_type=ty)
+            try:
+                # Remove storage type from the index
+                self.parent_repo._remove_from_index(self,
+                                                    storage_type=ty)
+            except ValueError as e:
+                ref = self.reference(storage_type=ty)
+                message_user("Unable to remove '%s' from index" % ref )
 
         self.parent_repo.refresh()
 
@@ -1493,7 +1520,7 @@ class RepoTree(object):
 
     def __len__(self):
         return (len(self.__repo_object_table)
-                + len(self.__repo_object_table))
+                + len(self.__sub_repo_table))
 
     def __update_doc_str(self):
         docs = "Repository Name: " + self.name + "\n\n"
@@ -1595,12 +1622,12 @@ Sub-Repositories
             parent_repo_str = "Root (%s)" % self.name
         html = """
         {repo_parent_header}
-        <div style="width: 35%;">
-            <div style="float:left; width: 50%">
-            {repos_list}
+        <div style="width: 55%;">
+            <div style="float:left; width: 50%; height:100%; overflow: auto">
+                {repos_list}
             </div>
-            <div style="float:right;">
-            {objs_list}
+            <div style="float:right; width:49%; height: 100%; overflow: auto; margin-left:1%">
+                {objs_list}
             </div>
         </div>
         """.format(repo_parent_header=parent_repo_str,
@@ -1967,10 +1994,11 @@ Sub-Repositories
         os.rmdir(self.idr_prop['repo_root'])
         self.idr_prop['parent_repo'].refresh()
 
-    def iterobjs(self):
-        #for k in sorted(self.__repo_object_table.keys()):
-        #    yield self.__repo_object_table[k].load()
-        for l in self.iterleaves():
+    def iterobjs(self, progress_bar=True):
+        to_iter = self.iterleaves()
+        to_iter = show_progress(to_iter, total=len(self.__repo_object_table)) \
+                    if progress_bar else to_iter
+        for l in to_iter:
             yield l.load()
 
     def iterleaves(self):
