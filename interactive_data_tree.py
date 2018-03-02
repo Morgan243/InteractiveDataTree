@@ -315,7 +315,8 @@ class StorageInterface(object):
     def add_reference(self, reference_uri, *reference_md_keys):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
-                                     resolve_references=False)
+                                     resolve_references=False,
+                                     include_sys_md=True)
         last_md = md_hist[-1]
         references = last_md.get('references', dict())
         keys = references.get(reference_uri, list())
@@ -334,7 +335,8 @@ class StorageInterface(object):
     def remove_reference(self, reference_uri, *reference_md_keys):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
-                                     resolve_references=False)
+                                     resolve_references=False,
+                                     include_sys_md=True)
         last_md = md_hist[-1]
         references = last_md.get('references', dict())
 
@@ -357,7 +359,8 @@ class StorageInterface(object):
     def add_referrer(self, referrer_uri, *referrer_md_keys):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
-                                     resolve_references=False)
+                                     resolve_references=False,
+                                     include_sys_md=True)
         last_md = md_hist[-1]
 
         referrers = last_md.get('referrers', dict())
@@ -377,7 +380,8 @@ class StorageInterface(object):
     def remove_referrer(self, referrer_uri, *referrer_md_keys):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
-                                     resolve_references=False)
+                                     resolve_references=False,
+                                     include_sys_md=True)
         last_md = md_hist[-1]
         if 'referrers' not in last_md:
             raise ValueError("Cannot remove a referrer that doesn't exist")
@@ -401,7 +405,7 @@ class StorageInterface(object):
             with open(self.md_path, 'w')  as f:
                 json.dump(md_hist, f)
 
-    def write_metadata(self, obj=None, **md_kwargs):
+    def write_metadata(self, obj=None, **user_md_kwargs):
         """
         Locks metadata file, reads current contents, and appends
         md_kwargs key-value pairs to the metadata.
@@ -420,7 +424,7 @@ class StorageInterface(object):
         None
         """
 
-        used_res_k = list(set(md_kwargs.keys()) & reserved_md_keywords)
+        used_res_k = list(set(user_md_kwargs.keys()) & reserved_md_keywords)
         if len(used_res_k) > 0:
             msg = "Use of reserved keyword(s) is forbidden: "
             msg += ", ".join(used_res_k)
@@ -428,20 +432,22 @@ class StorageInterface(object):
 
         # builtin_metata
         references = dict()
-        for k in md_kwargs.keys():
+        for k in user_md_kwargs.keys():
             # Overwrite leaf/URI to just URI
-            md_kwargs[k] = leaf_to_reference(md_kwargs[k],
+            user_md_kwargs[k] = leaf_to_reference(user_md_kwargs[k],
                                              to_storage_interface=True)
 
             # Normalize back to a leaf so we can update it's MD
             # store
-            if is_valid_uri(md_kwargs[k]):
-                uri = md_kwargs[k]
+            if is_valid_uri(user_md_kwargs[k]):
+                uri = user_md_kwargs[k]
                 if uri not in references:
                     references[uri] = list()
 
                 references[uri].append(k)
 
+
+        md_kwargs = dict(user_md=user_md_kwargs)
         if obj is not None:
             md_kwargs['obj_type'] = type(obj).__name__
 
@@ -456,7 +462,7 @@ class StorageInterface(object):
         #md_kwargs['_idt_md'] = idt_md
         with LockFile(self.lock_md_file):
             md = self.read_metadata(lock=False, most_recent=False,
-                                    resolve_references=False)
+                                    resolve_references=False, include_sys_md=True)
             most_recent_md = StorageInterface.__collapse_metadata_deltas(md)
 
             # TODO?
@@ -497,7 +503,7 @@ class StorageInterface(object):
 
 
     def read_metadata(self, lock=True, most_recent=True,
-                      resolve_references=True):
+                      resolve_references=True, include_sys_md=False):
         """
         Read entire metadata history from storage, with optional
         locking.
@@ -525,6 +531,15 @@ class StorageInterface(object):
         if most_recent:
             md = StorageInterface.__collapse_metadata_deltas(md)
 
+        sys_md = dict(md)
+        if 'user_md' not in sys_md:
+            user_md_k = list(set([k for k in set(sys_md.keys()) - reserved_md_keywords]))
+            sys_md['user_md'] = {k: sys_md[k] for k in user_md_k}
+            for k in user_md_k:
+                del sys_md[k]
+
+        md = sys_md['user_md']
+
         if resolve_references:
             if most_recent:
                 for k in md.keys():
@@ -535,6 +550,9 @@ class StorageInterface(object):
                         _md[k] = reference_to_leaf(self.parent_leaf.parent_repo,
                                                    _md[k])
 
+        if include_sys_md:
+            sys_md['user_md'] = md
+            md = sys_md
         return md
 
     def get_vector_representation(self):
@@ -562,20 +580,21 @@ class StorageInterface(object):
     @staticmethod
     def _build_html_body_(md):
 
+        umd = md['user_md']
         html_str = """
         <b>Author</b>: {author} <br>
         <b>Last Write</b>: {ts} <br>
         <b>Comments</b>: {comments} <br>
         <b>Type</b>: {ty} <br>
         <b>Tags</b>: {tags} <br>
-        """.format(author=md.get('author'),
-                   comments=md.get('comments'), ts=md.get('write_time'),
-                   ty=md.get('obj_type'), tags=md.get('tags'))
+        """.format(author=umd.get('author'),
+                   comments=umd.get('comments'), ts=md.get('write_time'),
+                   ty=md.get('obj_type'), tags=umd.get('tags'))
 
 
         extra_keys = md.get('extra_metadata_keys', list())
         if len(extra_keys) > 0:
-            html_items = ["<b>%s</b>: %s <br>" % (k, str(md[k])[:50])
+            html_items = ["<b>%s</b>: %s <br>" % (k, str(umd[k])[:50])
                           for k in extra_keys]
             add_md = """
             <h4>Additional Metadata</h4>
@@ -600,7 +619,7 @@ class StorageInterface(object):
         return div_template
 
     def _repr_html_(self):
-        md = self.read_metadata()
+        md = self.read_metadata(resolve_references=False, include_sys_md=True)
         html_str = """<h2> {name} </h2>""".format(name=self.name)
         html_str += StorageInterface._build_html_body_(md)
         return html_str
@@ -717,7 +736,7 @@ class HDFStorageInterface(StorageInterface):
         super(HDFStorageInterface, self).write_metadata(obj=obj, **md_kwargs)
 
     def _repr_html_(self):
-        md = self.read_metadata()
+        md = self.read_metadata(include_sys_md=True)
 
         basic_descrip = StorageInterface._build_html_body_(md)
         extra_descrip = """
@@ -913,7 +932,7 @@ class SQLStorageInterface(StorageInterface):
         return cxn.query(q)
 
     def _repr_html_(self):
-        md = self.read_metadata()
+        md = self.read_metadata(include_sys_md=True)
 
         basic_descrip = StorageInterface._build_html_body_(md)
         #sql_txt = SQLStorageInterface.build_query(self.load())
