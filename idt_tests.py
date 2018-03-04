@@ -180,9 +180,6 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.mkrepo('lvl1')
         rt.summary()
 
-    def test_default_init(self):
-        rt = idt.RepoTree(repo_root=None)
-
     def test_reinit(self):
         # Test that reopening a repo populates correctly
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -480,14 +477,14 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertTrue(hasattr(rt.lvl1.lvl2, 'just_a_string'))
 
         # Check that the reference changed
-        md = rt.lvl1.test_referrer.read_metadata()
-        t = rt.from_reference(md['other_data'])
+        md = rt.lvl1.test_referrer.read_metadata(user_md=False)
+        t = rt.from_reference(md['user_md']['other_data'])
         self.assertEqual(t, rt.lvl1.lvl2.just_a_string.pickle)
-        self.assertEqual(len(md['references']), 1)
+        self.assertEqual(len(md['tree_md']['references']), 1)
 
-        md2 = rt.lvl1.lvl2.just_a_string.read_metadata()
+        md2 = rt.lvl1.lvl2.just_a_string.read_metadata(user_md=False)
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer)
-        self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
+        self.assertTrue(uri in md2['tree_md']['referrers'] and len(md2['tree_md']['referrers']))
 
     def test_remove_empty_repo(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -548,20 +545,20 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertTrue(hasattr(rt.lvl1, 'really_important_string'))
 
         # Check that the reference changed
-        md = rt.lvl1.test_referrer.read_metadata()
-        t = rt.from_reference(md['other_data'])
+        md = rt.lvl1.test_referrer.read_metadata(user_md=False)
+        t = rt.from_reference(md['user_md']['other_data'])
         self.assertEqual(t, rt.lvl1.really_important_string.pickle)
-        self.assertEqual(len(md['references']), 1)
+        self.assertEqual(len(md['tree_md']['references']), 1)
 
-        md2 = rt.lvl1.really_important_string.read_metadata()
+        md2 = rt.lvl1.really_important_string.read_metadata(user_md=False)
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer)
-        self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
+        self.assertTrue(uri in md2['tree_md']['referrers'] and len(md2['tree_md']['referrers']))
 
         ### Rename the referrer
         rt.lvl1.test_referrer.rename('test_referrer_renamed', author='unittest')
-        md2 = rt.lvl1.really_important_string.read_metadata()
+        md2 = rt.lvl1.really_important_string.read_metadata(user_md=False)
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer_renamed)
-        self.assertTrue(uri in md2['referrers'] and len(md2['referrers']))
+        self.assertTrue(uri in md2['tree_md']['referrers'] and len(md2['tree_md']['referrers']))
 
     def test_missing_metadata(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -587,13 +584,6 @@ class InteractiveDataRepo(unittest.TestCase):
         # Reset
         idt.StorageInterface.required_metadata = list()
 
-    def test_reserved_keyword_error(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        rt.mkrepo('lvl1')
-
-        with self.assertRaises(ValueError):
-            rt.lvl1.save('foobar', name='barfoo',
-                        write_time='morning', obj_type='string')
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

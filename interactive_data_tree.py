@@ -27,6 +27,24 @@ else:
     prompt_input = raw_input
     fs_except = OSError
 
+def metadata_port(md_hist):
+    new_md_hist = list()
+    for md in md_hist:
+        user_md = {k:md[k] for k in md.get('extra_metadata_args', dict())}
+
+        tree_md = {k:md[k] for k in ['obj_type', 'write_time', 'extra_metadata_args',
+                                     'references', 'referrers', 'md_update_time']
+                  if k in md}
+        si_md = {k:md[k] for k in ['columns', 'dtypes', 'index_head', 'length']
+                 if k in md}
+        si_md = None if all(v is None for v in si_md.values()) else si_md
+
+        new_md = dict(user_md=user_md,
+                      tree_md=tree_md,
+                      si_md=si_md)
+        new_md_hist.append(new_md)
+    return new_md_hist
+
 
 def isidentifier(name):
     try:
@@ -41,13 +59,13 @@ idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_r
                   repo_extension='repo', metadata_extension='mdjson',
                   lock_extension='lock',
                   date_format='%h %d %Y (%I:%M:%S %p)',
+                  md_vers='0.1',
                   enable_queries=True)
 
-reserved_md_keywords = {'write_time', 'extra_metadata_keys',
-                        'obj_type', 'referrers', 'references',
-                        'md_update_time'}
-
+# Set values in this dict to be used as defaults in metadata
 shared_metadata = dict(notebook_name=None, author=None, project=None)
+md_fields = ['user_md', 'tree_md', 'si_md']
+
 base_master_log_entry = dict(repo_tree=None,
                              repo_leaf=None,
                              storage_type=None,
@@ -165,10 +183,7 @@ def leaf_to_reference(obj, to_storage_interface=False):
     if isinstance(obj, basestring):
         return obj
     elif isinstance(obj, RepoLeaf):
-        if to_storage_interface:
-            return obj._get_highest_priority_si().reference()
-        else:
-            return obj.reference()
+        return obj.reference()
     elif isinstance(obj, StorageInterface):
         return obj.reference()
     else:
@@ -252,7 +267,11 @@ class StorageInterface(object):
         # TODO: track first/last time a key was updated in MD
         latest_md = dict()
         for md_d in md_entries:
-            latest_md.update(md_d)
+            for k in md_d.keys():
+                tmp = latest_md.get(k, dict())
+                if md_d[k] is not None and len(md_d[k]) > 0:
+                    tmp.update(md_d[k])
+                latest_md[k] = tmp
         return latest_md
 
     def init(self):
@@ -300,7 +319,7 @@ class StorageInterface(object):
             with open(self.path, mode='wb') as f:
                 pickle.dump(obj, f)
 
-            self.write_metadata(obj=obj, **md_kwargs)
+            self.write_metadata(obj=obj, user_md=md_kwargs)
 
     def reference(self):
         r_names = self.parent_leaf.parent_repo.get_parent_repo_names()
@@ -316,16 +335,16 @@ class StorageInterface(object):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
                                      resolve_references=False,
-                                     include_sys_md=True)
+                                     user_md=False)
         last_md = md_hist[-1]
-        references = last_md.get('references', dict())
+        references = last_md['tree_md'].get('references', dict())
         keys = references.get(reference_uri, list())
 
         references[reference_uri] = list(set(keys + list(reference_md_keys)))
         for k in references[reference_uri]:
-            last_md[k] = reference_uri
+            last_md['user_md'][k] = reference_uri
 
-        last_md['references'] = references
+        last_md['tree_md']['references'] = references
         md_hist[-1] = last_md
 
         with LockFile(self.lock_md_file):
@@ -336,9 +355,9 @@ class StorageInterface(object):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
                                      resolve_references=False,
-                                     include_sys_md=True)
+                                     user_md=False)
         last_md = md_hist[-1]
-        references = last_md.get('references', dict())
+        references = last_md['tree_md'].get('references', dict())
 
         if reference_uri not in references:
             msg = "URI '%s' not in '%s' references" % (reference_uri, self.name)
@@ -346,10 +365,10 @@ class StorageInterface(object):
 
         keys = references[reference_uri]
         for k in keys:
-            last_md[k] = '[DELETED]' + str(last_md[k])
+            last_md['user_md'][k] = '[DELETED]' + str(last_md['user_md'][k])
 
         del references[reference_uri]
-        last_md['references'] = references
+        last_md['tree_md']['references'] = references
         md_hist[-1] = last_md
 
         with LockFile(self.lock_md_file):
@@ -360,17 +379,20 @@ class StorageInterface(object):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
                                      resolve_references=False,
-                                     include_sys_md=True)
+                                     user_md=False)
         last_md = md_hist[-1]
 
-        referrers = last_md.get('referrers', dict())
+        # Referrers maps a leaf URI to keys in the metadata
+        referrers = last_md['tree_md'].get('referrers', dict())
 
         if referrer_uri not in referrers:
             referrers[referrer_uri] = list()
 
+        # Add keys that were set to this reference, use set to remove duplicates
         referrers[referrer_uri].extend(referrer_md_keys)
         referrers[referrer_uri] = list(set(referrers[referrer_uri]))
-        last_md['referrers'] = referrers
+
+        last_md['tree_md']['referrers'] = referrers
         md_hist[-1] = last_md
 
         with LockFile(self.lock_md_file):
@@ -381,8 +403,8 @@ class StorageInterface(object):
         md_hist = self.read_metadata(lock=True,
                                      most_recent=False,
                                      resolve_references=False,
-                                     include_sys_md=True)
-        last_md = md_hist[-1]
+                                     user_md=False)
+        last_md = md_hist[-1]['tree_md']
         if 'referrers' not in last_md:
             raise ValueError("Cannot remove a referrer that doesn't exist")
 
@@ -399,13 +421,13 @@ class StorageInterface(object):
             del referrers[referrer_uri]
 
         last_md['referrers'] = referrers
-        md_hist[-1] = last_md
+        md_hist[-1]['tree_md'] = last_md
 
         with LockFile(self.lock_md_file):
-            with open(self.md_path, 'w')  as f:
+            with open(self.md_path, 'w') as f:
                 json.dump(md_hist, f)
 
-    def write_metadata(self, obj=None, **user_md_kwargs):
+    def write_metadata(self, obj=None, user_md=None, tree_md=None, si_md=None):
         """
         Locks metadata file, reads current contents, and appends
         md_kwargs key-value pairs to the metadata.
@@ -423,46 +445,44 @@ class StorageInterface(object):
         -------
         None
         """
+        obj = dict() if obj is None else obj
+        user_md = dict() if user_md is None else user_md
+        tree_md = dict() if tree_md is None else tree_md
+        si_md = dict() if si_md is None else si_md
 
-        used_res_k = list(set(user_md_kwargs.keys()) & reserved_md_keywords)
-        if len(used_res_k) > 0:
-            msg = "Use of reserved keyword(s) is forbidden: "
-            msg += ", ".join(used_res_k)
-            raise ValueError(msg)
-
-        # builtin_metata
         references = dict()
-        for k in user_md_kwargs.keys():
+        for k in user_md.keys():
             # Overwrite leaf/URI to just URI
-            user_md_kwargs[k] = leaf_to_reference(user_md_kwargs[k],
-                                             to_storage_interface=True)
+            user_md[k] = leaf_to_reference(user_md[k],
+                                           to_storage_interface=True)
 
             # Normalize back to a leaf so we can update it's MD
             # store
-            if is_valid_uri(user_md_kwargs[k]):
-                uri = user_md_kwargs[k]
+            if is_valid_uri(user_md[k]):
+                uri = user_md[k]
                 if uri not in references:
                     references[uri] = list()
 
                 references[uri].append(k)
 
 
-        md_kwargs = dict(user_md=user_md_kwargs)
         if obj is not None:
-            md_kwargs['obj_type'] = type(obj).__name__
+            tree_md['obj_type'] = type(obj).__name__
 
         cls = self.__class__
-        md_kwargs['write_time'] = datetime.now().strftime(idr_config['date_format'])
-        md_kwargs['md_update_time'] = md_kwargs['write_time']
-        md_kwargs['extra_metadata_keys'] = list(set(md_kwargs.keys()) -
+        tree_md['write_time'] = datetime.now().strftime(idr_config['date_format'])
+        tree_md['md_update_time'] =tree_md['write_time']
+        # TODO: This set math may be wrong or unecessary?
+        tree_md['extra_metadata_keys'] = list(set(user_md.keys()) -
                                                  set(cls.required_metadata +
                                                      standard_metadata +
                                                      cls.interface_metadata))
-        md_kwargs['references'] = references
-        #md_kwargs['_idt_md'] = idt_md
+        tree_md['references'] = references
+        tree_md['md_vers'] = idr_config['md_vers']
+        md_kwargs = dict(user_md=user_md, tree_md=tree_md, si_md=si_md)
         with LockFile(self.lock_md_file):
             md = self.read_metadata(lock=False, most_recent=False,
-                                    resolve_references=False, include_sys_md=True)
+                                    resolve_references=False,user_md=False)
             most_recent_md = StorageInterface.__collapse_metadata_deltas(md)
 
             # TODO?
@@ -487,9 +507,9 @@ class StorageInterface(object):
                     raise ValueError(msg)
 
             # Remove key values that we already have stored (key AND value match)
-            for k, v in most_recent_md.items():
-                if k in md_kwargs and v == md_kwargs[k]:
-                    del md_kwargs[k]
+            #for k, v in most_recent_md.items():
+            #    if k in md_kwargs and v == md_kwargs[k]:
+            #        del md_kwargs[k]
 
             md.append(md_kwargs)
             with open(self.md_path, 'w') as f:
@@ -503,7 +523,7 @@ class StorageInterface(object):
 
 
     def read_metadata(self, lock=True, most_recent=True,
-                      resolve_references=True, include_sys_md=False):
+                      resolve_references=True, user_md=True):
         """
         Read entire metadata history from storage, with optional
         locking.
@@ -525,34 +545,39 @@ class StorageInterface(object):
             else:
                 with open(self.md_path, 'r') as f:
                     md = json.load(f)
+
+
+            if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
+                md = metadata_port(md)
         else:
             md = []
 
         if most_recent:
             md = StorageInterface.__collapse_metadata_deltas(md)
 
-        sys_md = dict(md)
-        if 'user_md' not in sys_md:
-            user_md_k = list(set([k for k in set(sys_md.keys()) - reserved_md_keywords]))
-            sys_md['user_md'] = {k: sys_md[k] for k in user_md_k}
-            for k in user_md_k:
-                del sys_md[k]
-
-        md = sys_md['user_md']
+        def md_resolve(t_md):
+            for k in t_md.keys():
+                t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
+            return t_md
 
         if resolve_references:
             if most_recent:
-                for k in md.keys():
-                    md[k] = reference_to_leaf(self.parent_leaf.parent_repo, md[k])
+                md['user_md']= md_resolve(md.get('user_md', dict()))
+                md['si_md']= md_resolve(md.get('si_md', dict()))
+                #md['tree_md']= md_resolve(md['tree_md'])
             else:
                 for _md in md:
-                    for k in _md.keys():
-                        _md[k] = reference_to_leaf(self.parent_leaf.parent_repo,
-                                                   _md[k])
 
-        if include_sys_md:
-            sys_md['user_md'] = md
-            md = sys_md
+                    _md['user_md']= md_resolve(_md.get('user_md', dict()))
+                    _md['si_md']= md_resolve(_md.get('si_md', dict()))
+                    #md['tree_md']= md_resolve(md['tree_md'])
+                    #for k in _md.keys():
+                    #    _md[k] = reference_to_leaf(self.parent_leaf.parent_repo,
+                    #                               _md[k])
+
+        if user_md:
+            md = md.get('user_md', dict()) if most_recent else [_md.get('user_md', dict()) for _md in md]
+
         return md
 
     def get_vector_representation(self):
@@ -571,15 +596,17 @@ class StorageInterface(object):
         -------
         List of string terms
         """
-        md = self.read_metadata()
-        str_md_terms = [basic_tokenizer(v) for k, v in md.items()
-                        if isinstance(v, basestring)]
-        str_md_terms = [_v for v in str_md_terms for _v in v]
+        all_md = self.read_metadata(user_md=False)
+        str_md_terms = list()
+        for md in all_md.values():
+            tmp_md_terms = [basic_tokenizer(v) for k, v in md.items()
+                            if isinstance(v, basestring)]
+            str_md_terms += [_v for v in tmp_md_terms for _v in v]
         return str_md_terms
 
     @staticmethod
     def _build_html_body_(md):
-
+        tmd = md['tree_md']
         umd = md['user_md']
         html_str = """
         <b>Author</b>: {author} <br>
@@ -588,11 +615,11 @@ class StorageInterface(object):
         <b>Type</b>: {ty} <br>
         <b>Tags</b>: {tags} <br>
         """.format(author=umd.get('author'),
-                   comments=umd.get('comments'), ts=md.get('write_time'),
-                   ty=md.get('obj_type'), tags=umd.get('tags'))
+                   comments=umd.get('comments'), ts=tmd.get('write_time'),
+                   ty=tmd.get('obj_type'), tags=umd.get('tags'))
 
 
-        extra_keys = md.get('extra_metadata_keys', list())
+        extra_keys = tmd.get('extra_metadata_keys', list())
         if len(extra_keys) > 0:
             html_items = ["<b>%s</b>: %s <br>" % (k, str(umd[k])[:50])
                           for k in extra_keys]
@@ -619,7 +646,7 @@ class StorageInterface(object):
         return div_template
 
     def _repr_html_(self):
-        md = self.read_metadata(resolve_references=False, include_sys_md=True)
+        md = self.read_metadata(resolve_references=False, user_md=False)
         html_str = """<h2> {name} </h2>""".format(name=self.name)
         html_str += StorageInterface._build_html_body_(md)
         return html_str
@@ -676,7 +703,7 @@ class HDFStorageInterface(StorageInterface):
                           obj, format=HDFStorageInterface.hdf_format)
             hdf_store.close()
 
-        self.write_metadata(obj=obj, **md_kwargs)
+        self.write_metadata(obj=obj, user_md=md_kwargs)
 
     # TODO: There are some bugs here for certain dataframe, some possibly related issues:
     # https://github.com/pandas-dev/pandas/pull/13267
@@ -700,7 +727,8 @@ class HDFStorageInterface(StorageInterface):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
-    def write_metadata(self, obj=None, **md_kwargs):
+    def write_metadata(self, obj=None, user_md=None,
+                       tree_md=None, si_md=None):
         """
         Locks metadata file, reads current contents, and appends
         md_kwargs key-value pairs to the metadata.
@@ -725,28 +753,33 @@ class HDFStorageInterface(StorageInterface):
         if obj is not None and not self.__valid_object_for_storage(obj):
             raise ValueError("Expected Pandas Data object, got %s" % type(obj))
 
+        si_md = dict()
         if isinstance(obj, pd.DataFrame):
-            md_kwargs['columns'] = list(str(c) for c in obj.columns)
-            md_kwargs['dtypes'] = list(str(d) for d in obj.dtypes)
+            si_md['columns'] = list(str(c) for c in obj.columns)
+            si_md['dtypes'] = list(str(d) for d in obj.dtypes)
 
         if obj is not None:
-            md_kwargs['index_head'] = list(str(i) for i in obj.index[:5])
-            md_kwargs['length'] = len(obj)
+            si_md['index_head'] = list(str(i) for i in obj.index[:5])
+            si_md['length'] = len(obj)
 
-        super(HDFStorageInterface, self).write_metadata(obj=obj, **md_kwargs)
+        super(HDFStorageInterface, self).write_metadata(obj=obj,
+                                                        user_md=user_md,
+                                                        si_md=si_md)
 
     def _repr_html_(self):
-        md = self.read_metadata(include_sys_md=True)
+        md = self.read_metadata(user_md=False)
 
         basic_descrip = StorageInterface._build_html_body_(md)
+        smd = md['si_md']
+
         extra_descrip = """
         <b>Num Entries </b> : {num_entries} <br>
         <b>Columns</b> ({n_cols}) : {col_sample} <br>
         <b>Index Head</b> : {ix_head} <br>
-        """.format(num_entries=md.get('length'),
-                   n_cols=len(md.get('columns')),
-                   col_sample=", ".join(md.get('columns', [])[:10]),
-                   ix_head=", ".join(md.get('index_head', [])))
+        """.format(num_entries=smd.get('length', -1),
+                   n_cols=len(smd.get('columns', [])),
+                   col_sample=", ".join(smd.get('columns', [])[:10]),
+                   ix_head=", ".join(smd.get('index_head', [])))
 
 
         div_template = StorageInterface._get_two_column_div_template()
@@ -920,7 +953,7 @@ class SQLStorageInterface(StorageInterface):
             with open(self.path, mode='w') as f:
                 json.dump(store_dict, f)
 
-            self.write_metadata(obj=obj, **md_kwargs)
+            self.write_metadata(obj=obj, user_md=md_kwargs)
 
     def query(self, cxn, **parameters):
         if not hasattr(cxn, 'query'):
@@ -1109,20 +1142,26 @@ class RepoLeaf(object):
                 for ty, si in self.type_to_storage_interface_map.items()}
 
     def reference(self, storage_type=None):
-        r_names = self.parent_repo.get_parent_repo_names()
-
         if storage_type is None:
-            type_ext = self._get_highest_priority_si().storage_name
+            st = self._get_highest_priority_si()
         else:
-            type_ext = self.type_to_storage_interface_map[storage_type].storage_name
+            st = self.type_to_storage_interface_map[storage_type]
 
-        r_names.append(self.parent_repo.name)
-        r_names.append(self.name)
-        r_names.append(type_ext)
+        return st.reference()
+        #r_names = self.parent_repo.get_parent_repo_names()
 
-        ref_str = '/'.join(r_names)
-        ref_str = URI_SPEC + ref_str
-        return ref_str
+        #if storage_type is None:
+        #    type_ext = self._get_highest_priority_si().storage_name
+        #else:
+        #    type_ext = self.type_to_storage_interface_map[storage_type].storage_name
+
+        #r_names.append(self.parent_repo.name)
+        #r_names.append(self.name)
+        #r_names.append(type_ext)
+
+        #ref_str = '/'.join(r_names)
+        #ref_str = URI_SPEC + ref_str
+        #return ref_str
 
     def refresh(self):
         mde = idr_config['metadata_extension']
@@ -1437,13 +1476,13 @@ class RepoLeaf(object):
         # Go through new interfaces, make sure that any interfaces that
         # were referring to this interface before move are updated
         for ty, si in self.type_to_storage_interface_map.items():
-            md = si.read_metadata(resolve_references=False)
+            md = si.read_metadata(resolve_references=False, user_md=False)
             # If self has been deleted, we only need to remove references/referrers
             # so we shouldn't try and get the current URI since it is irrelevant
             if not delete:
                 new_si_uri = si.reference()
 
-            referrers = md.get('referrers', dict())
+            referrers = md['tree_md'].get('referrers', dict())
             for referrer_uri, keys in referrers.items():
                 # 'l' is a leaf that references this leaf
                 # -> Since this leaf is moving, we must update l's references
@@ -1454,7 +1493,7 @@ class RepoLeaf(object):
                 if not delete:
                     l.add_reference(new_si_uri, *keys)
 
-            references = md.get('references', dict())
+            references = md['tree_md'].get('references', dict())
             for reference_uri, keys in references.items():
                 # 'l' is a leaf that this leaf references
                 # -> Since this leaf is moving, we must update l's referrers
@@ -2100,6 +2139,10 @@ Sub-Repositories
         return self.list(list_repos=False, list_leaves=True)
 
     def from_reference(self, ref):
+        if ref is None:
+            msg = "Parameter 'ref' cannot be None"
+            raise ValueError(msg)
+
         # If the reference is already a leaf
         if isinstance(ref, RepoLeaf):
             ref = ref._get_highest_priority_si()
