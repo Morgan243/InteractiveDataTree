@@ -497,9 +497,10 @@ class StorageInterface(object):
                     raise ValueError(msg)
 
             # Remove key values that we already have stored (key AND value match)
-            #for k, v in most_recent_md.items():
-            #    if k in md_kwargs and v == md_kwargs[k]:
-            #        del md_kwargs[k]
+            for f in md_fields:
+                for k, v in most_recent_md.get(f, dict()).items():
+                    if k in md_kwargs.get(f, dict()) and v == md_kwargs[f][k]:
+                        del md_kwargs[f][k]
 
             md.append(md_kwargs)
             with open(self.md_path, 'w') as f:
@@ -827,6 +828,7 @@ class ModelStorageInterface(StorageInterface):
         preds = self.model.predict_proba(_x)
         return preds
 
+
 class SQL(object):
     def __init__(self, select_statement, from_statement,
                  where_statement='', query_parameters=None):
@@ -904,6 +906,7 @@ WHERE
 
         html = style_html + pygment_html
         return html
+
 
 class SQLStorageInterface(StorageInterface):
     storage_name = 'sql'
@@ -1132,20 +1135,6 @@ class RepoLeaf(object):
             st = self.type_to_storage_interface_map[storage_type]
 
         return st.reference()
-        #r_names = self.parent_repo.get_parent_repo_names()
-
-        #if storage_type is None:
-        #    type_ext = self._get_highest_priority_si().storage_name
-        #else:
-        #    type_ext = self.type_to_storage_interface_map[storage_type].storage_name
-
-        #r_names.append(self.parent_repo.name)
-        #r_names.append(self.name)
-        #r_names.append(type_ext)
-
-        #ref_str = '/'.join(r_names)
-        #ref_str = URI_SPEC + ref_str
-        #return ref_str
 
     def refresh(self):
         mde = idr_config['metadata_extension']
