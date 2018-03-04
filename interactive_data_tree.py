@@ -82,16 +82,6 @@ base_master_log_entry = dict(repo_tree=None,
 # - Enable references between objects
 #   - Simply store a set of dot paths in the metadata
 # - Log interface for easier adjustable verbosity and logging
-def show_progress(to_iter, **tqdm_kwargs):
-    try:
-        from tqdm import tqdm
-    except ImportError as e:
-        message_user("Install 'tqdm' for progress bars")
-        return to_iter
-
-    return tqdm(to_iter, **tqdm_kwargs)
-
-
 def is_valid_uri(obj):
     if not isinstance(obj, basestring):
         return False
@@ -229,7 +219,7 @@ class StorageInterface(object):
     def __str__(self):
         #return self.parent_leaf.reference(storage_type=self.storage_name)
         repos = self.parent_leaf.parent_repo.get_parent_repo_names()
-        repos[0] = 'ROOT'
+        repos = ['ROOT'] + repos
         return ".".join(repos + [self.parent_leaf.name, self.storage_name])
 
     def get_associated_files_and_locks(self):
@@ -564,16 +554,10 @@ class StorageInterface(object):
             if most_recent:
                 md['user_md']= md_resolve(md.get('user_md', dict()))
                 md['si_md']= md_resolve(md.get('si_md', dict()))
-                #md['tree_md']= md_resolve(md['tree_md'])
             else:
                 for _md in md:
-
                     _md['user_md']= md_resolve(_md.get('user_md', dict()))
                     _md['si_md']= md_resolve(_md.get('si_md', dict()))
-                    #md['tree_md']= md_resolve(md['tree_md'])
-                    #for k in _md.keys():
-                    #    _md[k] = reference_to_leaf(self.parent_leaf.parent_repo,
-                    #                               _md[k])
 
         if user_md:
             md = md.get('user_md', dict()) if most_recent else [_md.get('user_md', dict()) for _md in md]
@@ -965,7 +949,7 @@ class SQLStorageInterface(StorageInterface):
         return cxn.query(q)
 
     def _repr_html_(self):
-        md = self.read_metadata(include_sys_md=True)
+        md = self.read_metadata(user_md=False)
 
         basic_descrip = StorageInterface._build_html_body_(md)
         #sql_txt = SQLStorageInterface.build_query(self.load())

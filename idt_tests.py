@@ -26,6 +26,10 @@ class InteractiveDataRepo(unittest.TestCase):
         shutil.rmtree(self.repo_root_path)
         shutil.rmtree(self.repo_root_path_b)
 
+    def test_lock_file(self):
+        with self.assertRaises(ValueError):
+            idt.LockFile('/not/a/path/not_a_file.lock')
+
     def test_repo_creation(self):
         rep_tree = idt.RepoTree(repo_root=self.repo_root_path)
         self.assertEqual(rep_tree.idr_prop['repo_root'], self.repo_root_path + '.repo')
@@ -43,6 +47,8 @@ class InteractiveDataRepo(unittest.TestCase):
         #rep_tree.mkrepo(name='lvl1a')
         t_obj = 'some string'
         rep_tree.save(t_obj, 'test_string')
+
+        s = str(rep_tree.test_string.pickle)
 
         self.assertTrue(hasattr(rep_tree, 'test_string'))
         repos, objs = rep_tree.list()
@@ -250,6 +256,11 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual(lvl3.foobar, rt['lvl1']['lvl2']['lvl3']['foobar'])
         self.assertEqual(lvl3.foobar.pickle, rt['lvl1']['lvl2']['lvl3']['foobar']['pickle'])
 
+        self.assertEqual(1, len(lvl1))
+        self.assertIn('lvl2', lvl1)
+        self.assertIn('lvl3', lvl1.lvl2)
+        self.assertFalse('not there' in lvl1)
+
         with self.assertRaises(KeyError):
             t = lvl1['not_there']
 
@@ -265,6 +276,9 @@ class InteractiveDataRepo(unittest.TestCase):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
+        sql = idt.SQL(select_statement='*', from_statement='some_table',
+                      where_statement='where aga > 25')
+        lvl1.save(sql, 'test_sql')
         lvl1.save(df, 'test_df',
                   storage_type='hdf')
         lvl1.save('not a df', 'test_str',
@@ -273,6 +287,8 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl1._repr_html_()
         lvl1.test_df._repr_html_()
         lvl1.test_str._repr_html_()
+        sql._repr_html_()
+        lvl1.test_sql._repr_html_()
 
     def test_name_collisions(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -506,6 +522,18 @@ class InteractiveDataRepo(unittest.TestCase):
     def test_name_conflict(self):
         # TODO: Make sure that the name doesn't conflict with RepoTree properties
         pass
+
+    def test_iterrepos(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1a')
+        rt.mkrepo('lvl1b')
+        rt.mkrepo('lvl1c')
+
+        repos = list(rt.iterrepos(progress_bar=True))
+        self.assertIn(rt.lvl1a, repos)
+        self.assertIn(rt.lvl1b, repos)
+        self.assertIn(rt.lvl1c, repos)
+
 
     def test_iterobjs(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
