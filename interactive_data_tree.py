@@ -807,13 +807,71 @@ class HDFGroupStorageInterface(HDFStorageInterface):
 
     @staticmethod
     def __valid_object_for_storage(obj):
-        return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        #return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        return isinstance(obj, dict)
+
+    def __getitem__(self, item):
+        return self.load(group=item)
 
     def load(self, group=None):
-        pass
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='r')
+            hdf_keys = hdf_store.keys()
+            prefix = HDFGroupStorageInterface.hdf_data_level + '/'
+            if hasattr(group, '__iter__'):
+                ret = {g:hdf_store.get(prefix + str(g))
+                       for g in group if str(g) in hdf_keys}
+            else:
+                ret = hdf_store[prefix + str(group)]
+        return ret
 
-    def save(self, obj, **kwargs):
-        pass
+    def save(self, obj, **md_kwargs):
+        """
+        Locks the object and writes the object and metadata to the
+        filesystem.
+
+        Parameters
+        ----------
+        obj : Serializable Python object
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
+        if not self.__valid_object_for_storage(obj):
+            raise ValueError("Expected Pandas Data object, got %s" % type(obj))
+
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='w')
+            for k, v in obj.items():
+                hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                hdf_store.put(hdf_p,
+                                 v, format=HDFStorageInterface.hdf_format)
+            hdf_store.close()
+
+        self.write_metadata(obj=obj, user_md=md_kwargs)
+
+    def write_metadata(self, obj=None, user_md=None,
+                       tree_md=None, si_md=None):
+        if obj is not None and not self.__valid_object_for_storage(obj):
+            raise ValueError("Expected Dict of Pandas Data object, got %s" % type(obj))
+
+        si_md = dict()
+
+        o = list(obj.values())[0]
+
+        if isinstance(o, pd.DataFrame):
+            si_md['columns'] = list(str(c) for c in o.columns)
+            si_md['dtypes'] = list(str(d) for d in o.dtypes)
+
+        if o is not None:
+            si_md['index_head'] = list(str(i) for i in o.index[:5])
+            si_md['length'] = len(o)
+
+        super(HDFStorageInterface, self).write_metadata(obj=o,
+                                                        user_md=user_md,
+                                                        si_md=si_md)
 
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
@@ -1077,10 +1135,13 @@ def register_storage_interface(interface_class, name,
 
 register_storage_interface(HDFStorageInterface, 'hdf', 0,
                            types=[pd.DataFrame, pd.Series])
+
 register_storage_interface(StorageInterface, 'pickle', 1)
 register_storage_interface(ModelStorageInterface, 'model', 2)
 register_storage_interface(SQLStorageInterface, 'sql', 3,
                            types=[SQL])
+register_storage_interface(HDFGroupStorageInterface, 'ghdf', 4,
+                           types=[])
 
 
 class RepoLeaf(object):

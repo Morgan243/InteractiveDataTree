@@ -130,6 +130,18 @@ class InteractiveDataRepo(unittest.TestCase):
         ld_s = lvl1.test_series.load()
         pd.util.testing.assert_series_equal(df.a, ld_s)
 
+    def test_pandas_group_hdf(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        lvl1 = rt.mkrepo('lvl1')
+        df_grps = {1999 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
+         2000 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
+         2001 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
+         }
+        lvl1.save(df_grps, 'test_gdf', storage_type='ghdf')
+        lvl1.test_gdf[1999]
+        lvl1.test_gdf[2000]
+        lvl1.test_gdf[[1999, 2000]]
+
     def test_pandas_sample(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
