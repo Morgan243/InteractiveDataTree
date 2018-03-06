@@ -138,25 +138,6 @@ class InteractiveDataRepo(unittest.TestCase):
         s_df = lvl1.test_df.hdf.sample(n=5)
         pd.util.testing.assert_frame_equal(df.head(5), s_df)
 
-    def test_multiplex_storage(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        lvl1 = rt.mkrepo('lvl1')
-        df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
-        lvl1.save(df, 'test_df', storage_type='hdf')
-        lvl1.save('not a df', 'test_df', storage_type='pickle')
-
-        ld_df = lvl1.test_df.load()
-        pd.util.testing.assert_frame_equal(df, ld_df)
-        pd.util.testing.assert_frame_equal(df, lvl1.test_df.hdf.load())
-        self.assertEqual('not a df', lvl1.test_df.pickle.load())
-
-        lvl1.save(df.a, 'test_series', storage_type='hdf')
-        ld_s = lvl1.test_series.load()
-        pd.util.testing.assert_series_equal(df.a, ld_s)
-
-        lvl1.test_df.delete(author='unittests', storage_type='hdf')
-        self.assertEqual('not a df', lvl1.test_df.load())
-
     def test_attribute_axis_race(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
 
@@ -209,9 +190,9 @@ class InteractiveDataRepo(unittest.TestCase):
         ld_df = lvl1.test_df.load()
 
         self.assertEqual('foobar', lvl1.test_df.read_metadata()['comments'])
-        self.assertEqual('tester', lvl1.test_df.read_metadata(storage_type='hdf')['author'])
+        self.assertEqual('tester', lvl1.test_df.read_metadata()['author'])
         self.assertEqual('something_important',
-                         lvl1.test_df.read_metadata(storage_type='hdf')['some_random_md'])
+                         lvl1.test_df.read_metadata()['some_random_md'])
 
     def test_str_reference(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -227,11 +208,11 @@ class InteractiveDataRepo(unittest.TestCase):
                   another=lvl3.foobar)
 
         ref_str = lvl3.foobar.reference()
-        self.assertEqual(lvl3.foobar.pickle, rt.from_reference(ref_str))
+        self.assertEqual(lvl3.foobar, rt.from_reference(ref_str))
 
         # reference interface is overloaded to handle either string or StorageInterface objects
         # If passed a terminating node, make sure the node is just returned
-        self.assertEqual(lvl3.foobar.pickle, rt.from_reference(lvl3.foobar.pickle))
+        self.assertEqual(lvl3.foobar, rt.from_reference(lvl3.foobar))
 
         # make sure references are handled on instantiation of new repo
         rt_a = idt.RepoTree(repo_root=self.repo_root_path)
@@ -239,7 +220,7 @@ class InteractiveDataRepo(unittest.TestCase):
         rt_b = idt.RepoTree(repo_root=self.repo_root_path_b)
         rt_b.save('some object data', name='barfoo')
         with self.assertRaises(ValueError):
-            rt.from_reference(rt_b.barfoo.pickle)
+            rt.from_reference(rt_b.barfoo)
 
         fake_reference = 'rootishrepo-subrepo-subsubrepo-data-pickle'
         with self.assertRaises(ValueError):
@@ -254,7 +235,7 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl3.save('some string data', name='foobar')
         self.assertEqual(lvl3.foobar, lvl3['foobar'])
         self.assertEqual(lvl3.foobar, rt['lvl1']['lvl2']['lvl3']['foobar'])
-        self.assertEqual(lvl3.foobar.pickle, rt['lvl1']['lvl2']['lvl3']['foobar']['pickle'])
+        #self.assertEqual(lvl3.foobar.pickle, rt['lvl1']['lvl2']['lvl3']['foobar']['pickle'])
 
         self.assertEqual(1, len(lvl1))
         self.assertIn('lvl2', lvl1)
@@ -265,7 +246,8 @@ class InteractiveDataRepo(unittest.TestCase):
             t = lvl1['not_there']
 
         with self.assertRaises(KeyError):
-            t = rt['lvl1']['lvl2']['lvl3']['foobar']['hdf']
+            #t = rt['lvl1']['lvl2']['lvl3']['foobar']['hdf']
+            t = rt['lvl1']['lvl2']['lvl3']['foobarrrr']
 
     def test_setitem(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -363,11 +345,11 @@ class InteractiveDataRepo(unittest.TestCase):
                 comments=',mncxzlaj aois mas na')
 
         res = rt.search('something to search for', interactive=False)
-        k = idt.URI_SPEC + rt.name + '/subrepo_a/some_data/pickle'
+        k = idt.URI_SPEC + rt.name + '/subrepo_a/some_data'
         self.assertTrue(res[k] == max(res.values()))
 
         res = rt.search('12nm 121 23j 1n2d', interactive=False)
-        k = idt.URI_SPEC + rt.name + '/subrepo_a/other_data/pickle'
+        k = idt.URI_SPEC + rt.name + '/subrepo_a/other_data'
         self.assertTrue(res[k] == max(res.values()))
 
         ref = rt.subrepo_a.some_data.reference()
@@ -466,8 +448,8 @@ class InteractiveDataRepo(unittest.TestCase):
                   other_data=lvl1.barfoo)
 
         md = lvl1.foobar.read_metadata()
-        self.assertIsInstance(md['other_data'], idt.StorageInterface)
-        self.assertEqual(md['other_data'], lvl1.barfoo.pickle)
+        self.assertIsInstance(md['other_data'], idt.RepoLeaf)
+        self.assertEqual(md['other_data'], lvl1.barfoo)
 
         # Now, delete the referenced data
         lvl1.barfoo.delete(author='unittests')
@@ -495,7 +477,7 @@ class InteractiveDataRepo(unittest.TestCase):
         # Check that the reference changed
         md = rt.lvl1.test_referrer.read_metadata(user_md=False)
         t = rt.from_reference(md['user_md']['other_data'])
-        self.assertEqual(t, rt.lvl1.lvl2.just_a_string.pickle)
+        self.assertEqual(t, rt.lvl1.lvl2.just_a_string)
         self.assertEqual(len(md['tree_md']['references']), 1)
 
         md2 = rt.lvl1.lvl2.just_a_string.read_metadata(user_md=False)
@@ -575,7 +557,7 @@ class InteractiveDataRepo(unittest.TestCase):
         # Check that the reference changed
         md = rt.lvl1.test_referrer.read_metadata(user_md=False)
         t = rt.from_reference(md['user_md']['other_data'])
-        self.assertEqual(t, rt.lvl1.really_important_string.pickle)
+        self.assertEqual(t, rt.lvl1.really_important_string)
         self.assertEqual(len(md['tree_md']['references']), 1)
 
         md2 = rt.lvl1.really_important_string.read_metadata(user_md=False)
@@ -588,29 +570,7 @@ class InteractiveDataRepo(unittest.TestCase):
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer_renamed)
         self.assertTrue(uri in md2['tree_md']['referrers'] and len(md2['tree_md']['referrers']))
 
-    def test_missing_metadata(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        rt.mkrepo('lvl1')
 
-        ###
-        idt.StorageInterface.get_missing_metadata_fields(dict())
-        with self.assertRaises(ValueError):
-            idt.StorageInterface.get_missing_metadata_fields(list())
-
-        idt.StorageInterface.required_metadata = None
-        m_md = idt.StorageInterface.get_missing_metadata_fields(dict())
-        self.assertTrue(len(m_md) == 0)
-
-        idt.StorageInterface.required_metadata = 'foobar'
-        m_md = idt.StorageInterface.get_missing_metadata_fields(dict())
-        self.assertTrue(len(m_md) == 1)
-
-        # Ensure that missing metadata fields throw an exception
-        with self.assertRaises(ValueError):
-            rt.lvl1.save('nothing', ['some+data'], storage_type='model')
-
-        # Reset
-        idt.StorageInterface.required_metadata = list()
 
 
 # TODO:

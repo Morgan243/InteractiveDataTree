@@ -152,6 +152,17 @@ class LockFile(object):
             raise ValueError(msg % (path, p))
 
     def __enter__(self):
+        self.lock()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.unlock()
+
+    def unlock(self):
+        os.close(self.fs_lock)
+        os.remove(self.path)
+        return self
+
+    def lock(self):
         block_count = 0
         while True:
             try:
@@ -164,10 +175,9 @@ class LockFile(object):
                     print("[%d] %s" % (block_count, self.wait_msg))
                 time.sleep(self.poll_interval)
         self.locked = True
+        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        os.close(self.fs_lock)
-        os.remove(self.path)
+
 
 def leaf_to_reference(obj, to_storage_interface=False):
     if isinstance(obj, basestring):
@@ -190,59 +200,12 @@ def reference_to_leaf(tree, obj):
 
 standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
-class StorageInterface(object):
-    """
-    Base storage interface representing an arbitrary python object
-    stored using pickle. New storage interfaces should be derived
-    from this class.
-    """
-    storage_name = 'pickle'
-    extension = 'pkl'
-    expose_on_leaf = ['exists']
-    interface_metadata = []
-    required_metadata = []#['author']
-
-    def __init__(self, parent_leaf):
-        self.parent_leaf = parent_leaf
-        self.name = parent_leaf.name
-        self.path = parent_leaf.save_path + '.' + self.extension
-
-        self.lock_file = self.path + '.' + idr_config['lock_extension']
-
-        self.md_path = self.path + '.' + idr_config['metadata_extension']
-        self.lock_md_file = self.md_path + '.' + idr_config['lock_extension']
-        self.init()
-
-    def __call__(self, *args, **kwargs):
-        return self.load()
-
-    def __str__(self):
-        #return self.parent_leaf.reference(storage_type=self.storage_name)
-        repos = self.parent_leaf.parent_repo.get_parent_repo_names()
-        repos = ['ROOT'] + repos
-        return ".".join(repos + [self.parent_leaf.name, self.storage_name])
-
-    def get_associated_files_and_locks(self):
-        return [(self.path, self.lock_file),
-                (self.md_path, self.lock_md_file)]
-
-    @classmethod
-    def get_missing_metadata_fields(cls, md):
-        if not isinstance(md, dict):
-            raise ValueError("Expected dict, got %s" % str(type(md)))
-
-        if StorageInterface.required_metadata is None:
-            req_md = list()
-        elif not isinstance(StorageInterface.required_metadata, list):
-            req_md = [cls.required_metadata]
-        else:
-            req_md = cls.required_metadata
-
-        missing = list()
-        for rm in req_md:
-            if rm not in md:
-                missing.append(rm)
-        return missing
+class Metadata(object):
+    def __init__(self, path, lock_path=None, required_fields=None):
+        self.path = path
+        self.lock_path = path + '.' + idr_config['lock_extension'] \
+            if lock_path is None else lock_path
+        self.required_fields = list() if required_fields is None else required_fields
 
     @staticmethod
     def __collapse_metadata_deltas(md_entries):
@@ -264,6 +227,200 @@ class StorageInterface(object):
                 latest_md[k] = tmp
         return latest_md
 
+    def get_missing_metadata_fields(self, md):
+        if not isinstance(md, dict):
+            raise ValueError("Expected dict, got %s" % str(type(md)))
+
+        if StorageInterface.required_metadata is None:
+            req_md = list()
+        elif not isinstance(StorageInterface.required_metadata, list):
+            req_md = [self.required_fields]
+        else:
+            req_md = self.required_fields
+
+        missing = list()
+        for rm in req_md:
+            if rm not in md:
+                missing.append(rm)
+        return missing
+
+    def exists(self):
+        return os.path.isfile(self.path)
+
+    def write_metadata(self, **kwargs):
+        """
+        Locks metadata file, reads current contents, and appends
+        md_kwargs key-value pairs to the metadata.
+
+        Parameters
+        ----------
+        obj : object to which the metadata pertains
+            If the object is provided, then the type name of
+            the object can be stored in the metadata automatically.
+            Derived classes can include other automatic metadata
+            extraction (see HDF).
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
+
+        with LockFile(self.lock_path):
+            md = self.read_metadata(most_recent=False, lock=False)
+            most_recent_md = Metadata.__collapse_metadata_deltas(md)
+
+            # Remove key values that we already have stored (key AND value match)
+            for f in md_fields:
+                for k, v in most_recent_md.get(f, dict()).items():
+                    if k in kwargs.get(f, dict()) and v == kwargs[f][k]:
+                        del kwargs[f][k]
+
+            md.append(kwargs)
+            with open(self.path, 'w') as f:
+                json.dump(md, f)
+
+    def read_metadata(self, most_recent=True, lock=True):
+        if not os.path.isfile(self.path):
+            md = [dict(tree_md=dict(md_vers=idr_config['md_vers']))]
+        else:
+            if lock:
+                with LockFile(self.lock_path):
+                    with open(self.path, 'r') as f:
+                        md = json.load(f)
+            else:
+                with open(self.path, 'r') as f:
+                    md = json.load(f)
+
+        if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
+            md = metadata_port(md)
+
+        if most_recent:
+            md = Metadata.__collapse_metadata_deltas(md)
+
+        return md
+
+    def add_reference(self, reference_uri, *reference_md_keys):
+        with LockFile(self.lock_path):
+            md_hist = self.read_metadata(most_recent=False, lock=False)
+            last_md = md_hist[-1]
+            references = last_md['tree_md'].get('references', dict())
+            keys = references.get(reference_uri, list())
+
+            references[reference_uri] = list(set(keys + list(reference_md_keys)))
+            for k in references[reference_uri]:
+                last_md['user_md'][k] = reference_uri
+
+            last_md['tree_md']['references'] = references
+            md_hist[-1] = last_md
+
+            with open(self.path, 'w')  as f:
+                json.dump(md_hist, f)
+
+    def remove_reference(self, reference_uri, *reference_md_keys):
+        with LockFile(self.lock_path):
+            md_hist = self.read_metadata(most_recent=False, lock=False)
+            last_md = md_hist[-1]
+            references = last_md['tree_md'].get('references', dict())
+
+            if reference_uri not in references:
+                msg = "URI '%s' not in '%s' references" % (reference_uri, 'UNK')
+                raise ValueError(msg)
+
+            keys = references[reference_uri]
+            for k in keys:
+                last_md['user_md'][k] = '[DELETED]' + str(last_md['user_md'][k])
+
+            del references[reference_uri]
+            last_md['tree_md']['references'] = references
+            md_hist[-1] = last_md
+
+            with open(self.path, 'w')  as f:
+                json.dump(md_hist, f)
+
+    def add_referrer(self, referrer_uri, *referrer_md_keys):
+        with LockFile(self.lock_path):
+            md_hist = self.read_metadata(most_recent=False, lock=False)
+            last_md = md_hist[-1]
+
+            # Referrers maps a leaf URI to keys in the metadata
+            referrers = last_md['tree_md'].get('referrers', dict())
+
+            if referrer_uri not in referrers:
+                referrers[referrer_uri] = list()
+
+            # Add keys that were set to this reference, use set to remove duplicates
+            referrers[referrer_uri].extend(referrer_md_keys)
+            referrers[referrer_uri] = list(set(referrers[referrer_uri]))
+
+            last_md['tree_md']['referrers'] = referrers
+            md_hist[-1] = last_md
+
+            with open(self.path, 'w')  as f:
+                json.dump(md_hist, f)
+
+    def remove_referrer(self, referrer_uri, *referrer_md_keys):
+        with LockFile(self.lock_path):
+            md_hist = self.read_metadata(most_recent=False, lock=False)
+            last_md = md_hist[-1]['tree_md']
+            if 'referrers' not in last_md:
+                raise ValueError("Cannot remove a referrer that doesn't exist")
+
+            referrers = last_md['referrers']
+
+            if referrer_uri not in referrers:
+                raise ValueError("URI '%s' is not a referrer to %s" %
+                                 (referrer_uri, 'FIXME'))
+
+            for k in referrer_md_keys:
+                referrers[referrer_uri].remove(k)
+
+            if len(referrers[referrer_uri]) == 0:
+                del referrers[referrer_uri]
+
+            last_md['referrers'] = referrers
+            md_hist[-1]['tree_md'] = last_md
+
+            with open(self.path, 'w') as f:
+                json.dump(md_hist, f)
+
+class StorageInterface(object):
+    """
+    Base storage interface representing an arbitrary python object
+    stored using pickle. New storage interfaces should be derived
+    from this class.
+    """
+    storage_name = 'pickle'
+    extension = 'pkl'
+    expose_on_leaf = ['exists']
+    interface_metadata = []
+    required_metadata = []#['author']
+
+    def __init__(self, parent_leaf):
+        self.parent_leaf = parent_leaf
+        self.name = parent_leaf.name
+        self.path = parent_leaf.save_path + '.' + self.extension
+
+        self.lock_file = self.path + '.' + idr_config['lock_extension']
+
+        self.md_path = self.path + '.' + idr_config['metadata_extension']
+        self.md = Metadata(path=self.md_path,
+                           required_fields=self.required_metadata)
+        self.init()
+
+    def __call__(self, *args, **kwargs):
+        return self.load()
+
+    def __str__(self):
+        #return self.parent_leaf.reference(storage_type=self.storage_name)
+        repos = self.parent_leaf.parent_repo.get_parent_repo_names()
+        repos = ['ROOT'] + repos
+        return ".".join(repos + [self.parent_leaf.name, self.storage_name])
+
+    def get_associated_files_and_locks(self):
+        return [(self.path, self.lock_file),
+                (self.md.path, self.md.lock_path)]
+
     def init(self):
         pass
 
@@ -271,9 +428,10 @@ class StorageInterface(object):
         return os.path.isfile(self.path)
 
     def md_exists(self):
-        return os.path.isfile(self.md_path)
+        return self.md.exists()
+        #return os.path.isfile(self.md_path)
 
-    def load(self):
+    def load(self, **kwargs):
         """
         Locks the object and reads the data from the filesystem
 
@@ -300,7 +458,7 @@ class StorageInterface(object):
         -------
         None
         """
-        missing_md = StorageInterface.get_missing_metadata_fields(md_kwargs)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs)
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
@@ -312,110 +470,15 @@ class StorageInterface(object):
             self.write_metadata(obj=obj, user_md=md_kwargs)
 
     def reference(self):
-        r_names = self.parent_leaf.parent_repo.get_parent_repo_names()
-        type_ext = self.storage_name
-        r_names.append(self.parent_leaf.parent_repo.name)
-        r_names.append(self.parent_leaf.name)
-        r_names.append(type_ext)
-        ref_str = '/'.join(r_names)
-        ref_str = URI_SPEC + ref_str
-        return ref_str
-
-    def add_reference(self, reference_uri, *reference_md_keys):
-        md_hist = self.read_metadata(lock=True,
-                                     most_recent=False,
-                                     resolve_references=False,
-                                     user_md=False)
-        last_md = md_hist[-1]
-        references = last_md['tree_md'].get('references', dict())
-        keys = references.get(reference_uri, list())
-
-        references[reference_uri] = list(set(keys + list(reference_md_keys)))
-        for k in references[reference_uri]:
-            last_md['user_md'][k] = reference_uri
-
-        last_md['tree_md']['references'] = references
-        md_hist[-1] = last_md
-
-        with LockFile(self.lock_md_file):
-            with open(self.md_path, 'w')  as f:
-                json.dump(md_hist, f)
-
-    def remove_reference(self, reference_uri, *reference_md_keys):
-        md_hist = self.read_metadata(lock=True,
-                                     most_recent=False,
-                                     resolve_references=False,
-                                     user_md=False)
-        last_md = md_hist[-1]
-        references = last_md['tree_md'].get('references', dict())
-
-        if reference_uri not in references:
-            msg = "URI '%s' not in '%s' references" % (reference_uri, self.name)
-            raise ValueError(msg)
-
-        keys = references[reference_uri]
-        for k in keys:
-            last_md['user_md'][k] = '[DELETED]' + str(last_md['user_md'][k])
-
-        del references[reference_uri]
-        last_md['tree_md']['references'] = references
-        md_hist[-1] = last_md
-
-        with LockFile(self.lock_md_file):
-            with open(self.md_path, 'w')  as f:
-                json.dump(md_hist, f)
-
-    def add_referrer(self, referrer_uri, *referrer_md_keys):
-        md_hist = self.read_metadata(lock=True,
-                                     most_recent=False,
-                                     resolve_references=False,
-                                     user_md=False)
-        last_md = md_hist[-1]
-
-        # Referrers maps a leaf URI to keys in the metadata
-        referrers = last_md['tree_md'].get('referrers', dict())
-
-        if referrer_uri not in referrers:
-            referrers[referrer_uri] = list()
-
-        # Add keys that were set to this reference, use set to remove duplicates
-        referrers[referrer_uri].extend(referrer_md_keys)
-        referrers[referrer_uri] = list(set(referrers[referrer_uri]))
-
-        last_md['tree_md']['referrers'] = referrers
-        md_hist[-1] = last_md
-
-        with LockFile(self.lock_md_file):
-            with open(self.md_path, 'w')  as f:
-                json.dump(md_hist, f)
-
-    def remove_referrer(self, referrer_uri, *referrer_md_keys):
-        md_hist = self.read_metadata(lock=True,
-                                     most_recent=False,
-                                     resolve_references=False,
-                                     user_md=False)
-        last_md = md_hist[-1]['tree_md']
-        if 'referrers' not in last_md:
-            raise ValueError("Cannot remove a referrer that doesn't exist")
-
-        referrers = last_md['referrers']
-
-        if referrer_uri not in referrers:
-            raise ValueError("URI '%s' is not a referrer to %s" %
-                             (referrer_uri, self.name))
-
-        for k in referrer_md_keys:
-            referrers[referrer_uri].remove(k)
-
-        if len(referrers[referrer_uri]) == 0:
-            del referrers[referrer_uri]
-
-        last_md['referrers'] = referrers
-        md_hist[-1]['tree_md'] = last_md
-
-        with LockFile(self.lock_md_file):
-            with open(self.md_path, 'w') as f:
-                json.dump(md_hist, f)
+        return self.parent_leaf.reference()
+        #r_names = self.parent_leaf.parent_repo.get_parent_repo_names()
+        #type_ext = self.storage_name
+        #r_names.append(self.parent_leaf.parent_repo.name)
+        #r_names.append(self.parent_leaf.name)
+        #r_names.append(type_ext)
+        #ref_str = '/'.join(r_names)
+        #ref_str = URI_SPEC + ref_str
+        #return ref_str
 
     def write_metadata(self, obj=None, user_md=None, tree_md=None, si_md=None):
         """
@@ -455,7 +518,6 @@ class StorageInterface(object):
 
                 references[uri].append(k)
 
-
         if obj is not None:
             tree_md['obj_type'] = type(obj).__name__
 
@@ -469,101 +531,65 @@ class StorageInterface(object):
                                                      cls.interface_metadata))
         tree_md['references'] = references
         tree_md['md_vers'] = idr_config['md_vers']
+
+        # TODO?
+        # Remove this leaf from referrers to other
+        # leafs if a reference was removed
+        this_uri = self.parent_leaf.reference()
+        for uri, keys in references.items():
+            l = self.parent_leaf.parent_repo.from_reference(uri)
+
+            if isinstance(l, RepoLeaf):
+                # No type was specified, so reference the highest priority
+                #self.md.add_referrer(this_uri, *keys)
+                l.si.md.add_referrer(this_uri, *keys)
+            elif isinstance(l, RepoTree):
+                msg = ("Cannot reference a repository (%s), found in md keys: "
+                       % l.name)
+                msg += ", ".join(keys)
+                raise ValueError(msg)
+
         md_kwargs = dict(user_md=user_md, tree_md=tree_md, si_md=si_md)
-        with LockFile(self.lock_md_file):
-            md = self.read_metadata(lock=False, most_recent=False,
-                                    resolve_references=False,user_md=False)
-            most_recent_md = StorageInterface.__collapse_metadata_deltas(md)
 
-            # TODO?
-            # Remove this leaf from referrers to other
-            # leafs if a reference was removed
-            #current_refs = most_recent_md.get('references', dict())
-            this_uri = self.reference()
-            for uri, keys in references.items():
-                #l = reference_to_leaf(self.parent_leaf.parent_repo, uri)
-                l = self.parent_leaf.parent_repo.from_reference(uri)
+        self.md.write_metadata(**md_kwargs)
 
-                if isinstance(l, StorageInterface):
-                    l.add_referrer(this_uri, *keys)
-                elif isinstance(l, RepoLeaf):
-                    # No type was specified, so reference the highest priority
-                    si = l._get_highest_priority_si()
-                    si.add_referrer(this_uri, *keys)
-                elif isinstance(l, RepoTree):
-                    msg = ("Cannot reference a repository (%s), found in md keys: "
-                           % l.name)
-                    msg += ", ".join(keys)
-                    raise ValueError(msg)
+    def md_resolve(self, t_md):
+        for k in t_md.keys():
+            t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
+        return t_md
 
-            # Remove key values that we already have stored (key AND value match)
-            for f in md_fields:
-                for k, v in most_recent_md.get(f, dict()).items():
-                    if k in md_kwargs.get(f, dict()) and v == md_kwargs[f][k]:
-                        del md_kwargs[f][k]
-
-            md.append(md_kwargs)
-            with open(self.md_path, 'w') as f:
-                json.dump(md, f)
-
-    def update_metadata(self, **md_kwargs):
-        raise NotImplementedError("Update is not implemented yet :(")
-        with LockFile(self.lock_md_file):
-            all_md = self.read_metadata(lock=False,
-                                    most_recent=False, resolve_references=False)
-
-
-    def read_metadata(self, lock=True, most_recent=True,
-                      resolve_references=True, user_md=True):
+    def read_metadata(self, most_recent=True, resolve_references=True,
+                      user_md=True):
         """
-        Read entire metadata history from storage, with optional
-        locking.
+        Read entire metadata history from storage. Each
+        storage interface saves it's own metadata, so
+        the interface must be specified, otherwise the
+        priority order is used.
 
         Parameters
         ----------
-        lock : bool (default=True)
-            Whether or not to lock the metadata file before reading.
+        storage_type : str (default=None)
+            Storage interface whose metadata to read
 
         Returns
         -------
         Metadata history as a list of dictionaries
         """
-        if os.path.isfile(self.md_path):
-            if lock:
-                with LockFile(self.lock_md_file):
-                    with open(self.md_path, 'r') as f:
-                        md = json.load(f)
-            else:
-                with open(self.md_path, 'r') as f:
-                    md = json.load(f)
-
-
-            if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
-                md = metadata_port(md)
-        else:
-            md = []
-
-        if most_recent:
-            md = StorageInterface.__collapse_metadata_deltas(md)
-
-        def md_resolve(t_md):
-            for k in t_md.keys():
-                t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
-            return t_md
-
+        md = self.md.read_metadata(most_recent=most_recent)
         if resolve_references:
             if most_recent:
-                md['user_md']= md_resolve(md.get('user_md', dict()))
-                md['si_md']= md_resolve(md.get('si_md', dict()))
+                md['user_md'] = self.md_resolve(md.get('user_md', dict()))
+                md['si_md'] = self.md_resolve(md.get('si_md', dict()))
             else:
                 for _md in md:
-                    _md['user_md']= md_resolve(_md.get('user_md', dict()))
-                    _md['si_md']= md_resolve(_md.get('si_md', dict()))
+                    _md['user_md'] = self.md_resolve(_md.get('user_md', dict()))
+                    _md['si_md'] = self.md_resolve(_md.get('si_md', dict()))
 
         if user_md:
             md = md.get('user_md', dict()) if most_recent else [_md.get('user_md', dict()) for _md in md]
 
         return md
+
 
     def get_vector_representation(self):
         term_cnts = dict()
@@ -581,7 +607,7 @@ class StorageInterface(object):
         -------
         List of string terms
         """
-        all_md = self.read_metadata(user_md=False)
+        all_md = self.md.read_metadata(most_recent=True)
         str_md_terms = list()
         for md in all_md.values():
             tmp_md_terms = [basic_tokenizer(v) for k, v in md.items()
@@ -794,7 +820,7 @@ class ModelStorageInterface(StorageInterface):
     def save(self, obj,
              **md_kwargs):
 
-        missing_md = StorageInterface.get_missing_metadata_fields(md_kwargs)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs)
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
@@ -929,7 +955,7 @@ class SQLStorageInterface(StorageInterface):
             msg = "SQLStorage expects a datatree SQL object, but got %s"
             raise ValueError(msg % str(type(obj)))
 
-        missing_md = self.get_missing_metadata_fields(md_kwargs)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs)
 
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
@@ -1066,6 +1092,8 @@ class RepoLeaf(object):
 
         self.save_path = os.path.join(self.parent_repo.idr_prop['repo_root'], self.name)
         self.type_to_storage_interface_map = dict()
+        self.si = None
+        self.storage_type = None
         self.refresh()
 
     def __call__(self, *args, **kwargs):
@@ -1081,12 +1109,7 @@ class RepoLeaf(object):
         return self.load(storage_type=None)
 
     def __getitem__(self, item):
-        if item not in self.type_to_storage_interface_map:
-            msg = "No storage interface '%s'. Expected one of %s"
-            msg = msg % (item, ",".join(self.type_to_storage_interface_map.keys()))
-            raise KeyError(msg)
-
-        return self.type_to_storage_interface_map[item]
+        return self.si[item]
 
     def __update_doc_str(self):
         docs = self.name + "\n\n"
@@ -1112,116 +1135,49 @@ class RepoLeaf(object):
         docs += "\n\n"
         self.__doc__ = docs
 
-    def _get_highest_priority_si(self):
-        for st in storage_type_priority_order:
-            if st in self.type_to_storage_interface_map:
-                return self.type_to_storage_interface_map[st]
-
     def _repr_html_(self):
-        return self._get_highest_priority_si()._repr_html_()
+        return self.si._repr_html_()
 
     def items(self):
         return self.type_to_storage_interface_map.items()
 
-    def get_vector_representation_map(self):
-        self.refresh()
-        return {ty:si.get_vector_representation()
-                for ty, si in self.type_to_storage_interface_map.items()}
-
-    def reference(self, storage_type=None):
-        if storage_type is None:
-            st = self._get_highest_priority_si()
-        else:
-            st = self.type_to_storage_interface_map[storage_type]
-
-        return st.reference()
+    def reference(self):
+        r_names = self.parent_repo.get_parent_repo_names()
+        r_names.append(self.parent_repo.name)
+        r_names.append(self.name)
+        ref_str = '/'.join(r_names)
+        ref_str = URI_SPEC + ref_str
+        return ref_str
 
     def refresh(self):
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
 
-        cur_si_map = dict(self.type_to_storage_interface_map)
-        cur_types = set(cur_si_map.keys())
+        fnames = [p for p in glob(self.save_path + '*')
+                        if p[-len(mde):] != mde
+                        and p[-len(repe):] != repe]
 
-        # Map extenstions of files to their paths
-        self.tmp = {os.path.split(p)[-1].split('.')[-1]: p
-                                              for p in glob(self.save_path + '*')
-                                              if p[-len(mde):] != mde
-                                              and p[-len(repe):] != repe
-                                              }
-        # Create maps of SI to paths
-        self.tmp = {extension_to_interface_name_map[k]: v
-                    for k, v in self.tmp.items()}
+        if len(fnames) == 1:
+            if self.si is None:
+                path = fnames[0]
+                fname = os.path.split(path)[-1]
+                name, ext = fname.split('.')
+                si_name = extension_to_interface_name_map[ext]
+                si_cls = storage_interfaces[si_name]
+                self.si = si_cls(parent_leaf=self)
 
-        # Create new SI or grab current one
-        self.type_to_storage_interface_map = {k: storage_interfaces[k](parent_leaf=self)
-                                              if k not in self.type_to_storage_interface_map else
-                                              self.type_to_storage_interface_map[k]
-                                              for k, v in self.tmp.items()}
+            setattr(self, self.si.storage_name, self.si)
+            for l in self.si.expose_on_leaf:
+                setattr(self, l, getattr(self.si, l))
 
-        # Delete types that are no longer present on the FS
-        next_types = set(self.type_to_storage_interface_map.keys())
+        elif len(fnames) > 1:
+            msg = "to many files"
+            raise ValueError(msg)
 
-        # Foreach item no longer present
-        for t in (cur_types - next_types):
-            si = cur_si_map[t]
-            delattr(self, si.storage_name)
-
-            for eol in si.expose_on_leaf:
-                if hasattr(si, eol):#
-                    if hasattr(self, eol) and getattr(self, eol) == getattr(si, eol):
-                       delattr(self, eol)
-
-        # Are there are types that need assignment
-        if len(next_types) > 0:
-            for t in next_types:
-                si = self.type_to_storage_interface_map[t]
-                setattr(self, si.storage_name, si)
-
-            # Only expose SI attrs from the highest priority SI
-            next_types = sorted(list(next_types),
-                                key=lambda t: storage_type_priority_map[t])
-            priority_type = self.type_to_storage_interface_map[next_types[0]]
-
-            for eol in priority_type.expose_on_leaf:
-                if hasattr(si, eol):
-                    setattr(self, eol, getattr(si, eol))
-
-        self.__update_doc_str()
         return self
 
-    def read_metadata(self, storage_type=None, **kwargs):
-        """
-        Read entire metadata history from storage. Each
-        storage interface saves it's own metadata, so
-        the interface must be specified, otherwise the
-        priority order is used.
-
-        Parameters
-        ----------
-        storage_type : str (default=None)
-            Storage interface whose metadata to read
-
-        Returns
-        -------
-        Metadata history as a list of dictionaries
-        """
-        if storage_type is not None:
-            if storage_type not in self.type_to_storage_interface_map:
-                raise ValueError("Type %s does not exist for %s" % (storage_type, self.name))
-
-            md = self.type_to_storage_interface_map[storage_type].read_metadata(**kwargs)
-        else:
-            md = None
-            for po in storage_type_priority_order:
-                if po in self.type_to_storage_interface_map:
-                    md = self.type_to_storage_interface_map[po].read_metadata(**kwargs)
-                    break
-        return md
-
     def save(self, obj, storage_type=None, auto_overwrite=False,
-             verbose=True,
-             **md_props):
+             verbose=True, **md_props):
         """
         Save the object and metadata to the filesystem using a specific
         storage interface
@@ -1253,11 +1209,14 @@ class RepoLeaf(object):
             msg = msg % (storage_type, ",".join(storage_interfaces.keys()))
             raise ValueError(msg)
 
+        last_storage_type = self.storage_type
+        self.storage_type = storage_type
+
         # Construct the filesystem path using a typed extension
-        store_int = storage_interfaces[storage_type](parent_leaf=self)
+        self.si = storage_interfaces[storage_type](parent_leaf=self)
 
         # Double Check - file exists there or file is registered in memory
-        if store_int.exists() or storage_type in self.type_to_storage_interface_map:
+        if self.si.exists():
             if auto_overwrite and verbose:
                 print("Auto overwriting '%s' (%s) in %s " % (self.name,
                                                              storage_type,
@@ -1278,23 +1237,29 @@ class RepoLeaf(object):
             message_user("Saving to: %s.%s (%s)" % (self.parent_repo.name,
                                                     self.name, storage_type))
 
-        store_int.save(obj, **md_props)
+        self.si.save(obj, **md_props)
+
+        if hasattr(self.si, 'init'):
+            self.si.init()
+
+        if last_storage_type != self.storage_type and last_storage_type is not None:
+            delattr(self, last_storage_type)
+
+        #setattr(self, self.storage_type, self.si)
 
         if verbose:
             message_user("Save Complete")
             message_user("-------------")
 
         self.parent_repo._append_to_master_log(operation='save', leaf=self,
-                                               author=md_props.get('author', None),
-                                               storage_type=storage_type)
+                                               author=md_props.get('author', None))
 
-        self.parent_repo._add_to_index(leaf=self,
-                                       storage_type=storage_type)
+        self.parent_repo._add_to_index(leaf=self)
 
         self.refresh()
 
     # TODO: Move delete to storage interface, perform with lock?
-    def delete(self, author, storage_type=None):
+    def delete(self, author):
         """
         Permanently destroy the object
 
@@ -1307,23 +1272,13 @@ class RepoLeaf(object):
         -------
         None
         """
-        orig_si_uris = {ty:si.reference()
-                        for ty, si in self.type_to_storage_interface_map.items()}
-
-        if storage_type is None:
-            filenames = glob(self.save_path + '.*')
-            message_user("Deleting:\n%s" % "\n".join(filenames))
-            [os.remove(fn) for fn in filenames]
-        else:
-            p = self.type_to_storage_interface_map[storage_type].path
-            md_p = self.type_to_storage_interface_map[storage_type].md_path
-            os.remove(p)
-            os.remove(md_p)
+        filenames = glob(self.save_path + '.*')
+        message_user("Deleting:\n%s" % "\n".join(filenames))
+        [os.remove(fn) for fn in filenames]
 
         self.parent_repo._append_to_master_log(operation='delete', leaf=self,
-                                               author=author,
-                                               storage_type=storage_type)
-        self.parent_repo._remove_from_index(self, storage_type=storage_type, missing_err='ignore')
+                                               author=author)
+        self.parent_repo._remove_from_index(self, missing_err='ignore')
         self.parent_repo.refresh()
 
     def rename(self, new_name, author):
@@ -1336,39 +1291,37 @@ class RepoLeaf(object):
                    % (self.parent_repo.name, new_name))
             raise ValueError(msg)
 
-        orig_si_uris = {ty:si.reference()
-                        for ty, si in self.type_to_storage_interface_map.items()}
+        #orig_si_uris = {ty:si.reference()
+        #                for ty, si in self.type_to_storage_interface_map.items()}
+        orig_si_ref = self.reference()
 
         orig_name = self.name
         base_p = self.parent_repo.idr_prop['repo_root']
-        for ty, si in self.type_to_storage_interface_map.items():
-            files_and_locks = si.get_associated_files_and_locks()
-            # Remove all files using associated lock files
-            for f, l_f in files_and_locks:
-                # Will break if lock file is not valid...
-                with LockFile(l_f):
-                    fname = os.path.split(f)[-1]
-                    new_fname = fname.replace(orig_name, new_name)
-                    new_p = os.path.join(base_p, new_fname)
-                    shutil.move(f, new_p)
+        files_and_locks = self.si.get_associated_files_and_locks()
+        # Remove all files using associated lock files
+        for f, l_f in files_and_locks:
+            # Will break if lock file is not valid...
+            with LockFile(l_f):
+                fname = os.path.split(f)[-1]
+                new_fname = fname.replace(orig_name, new_name)
+                new_p = os.path.join(base_p, new_fname)
+                shutil.move(f, new_p)
 
-            try:
-                # Remove storage type from the index
-                self.parent_repo._remove_from_index(self,
-                                                    storage_type=ty)
-            except ValueError as e:
-                ref = self.reference(storage_type=ty)
-                message_user("Unable to remove '%s' from index" % ref )
+        try:
+            # Remove storage type from the index
+            self.parent_repo._remove_from_index(self)
+        except ValueError as e:
+            ref = self.reference()
+            message_user("Unable to remove '%s' from index" % ref )
 
         self.parent_repo.refresh()
 
         self.parent_repo._append_to_master_log(operation='rename', leaf=self,
-                                               author=author,
-                                               storage_type=None)
+                                               author=author)
 
-        self.parent_repo._add_to_index(self, storage_type=None)
+        self.parent_repo._add_to_index(self)
 
-        self.parent_repo[new_name].update_references(orig_si_uris)
+        self.parent_repo[new_name].update_references(orig_si_ref)
 
     def move(self, tree, author):
         """
@@ -1394,33 +1347,34 @@ class RepoLeaf(object):
             raise ValueError(msg)
 
         new_base_p = tree.idr_prop['repo_root']
-        orig_si_uris = {ty:si.reference()
-                        for ty, si in self.type_to_storage_interface_map.items()}
+        #orig_si_uris = {ty:si.reference()
+        #                for ty, si in self.type_to_storage_interface_map.items()}
+        #orig_si_ref = self.si.reference()
+        orig_si_ref = self.reference()
 
-        for ty, si in self.type_to_storage_interface_map.items():
-            files_and_locks = si.get_associated_files_and_locks()
-            # Remove all files using associated lock files
-            for f, l_f in files_and_locks:
-                # Will break if lock file is not valid...
-                with LockFile(l_f):
-                    fname = os.path.split(f)[-1]
-                    new_p = os.path.join(new_base_p, fname)
-                    shutil.move(f, new_p)
+        files_and_locks = self.si.get_associated_files_and_locks()
+        # Remove all files using associated lock files
+        for f, l_f in files_and_locks:
+            # Will break if lock file is not valid...
+            with LockFile(l_f):
+                fname = os.path.split(f)[-1]
+                new_p = os.path.join(new_base_p, fname)
+                shutil.move(f, new_p)
 
-            # Remove storage type from the index
-            self.parent_repo._remove_from_index(self,
-                                                storage_type=ty)
+        # Remove storage type from the index
+        self.parent_repo._remove_from_index(self)
         self.parent_repo.refresh()
         tree.refresh()
         self.parent_repo._append_to_master_log(operation='move', leaf=self,
                                                author=author,
-                                               storage_type=None)
+                                               storage_type=self.si.storage_name)
 
-        self.parent_repo._add_to_index(tree[self.name], storage_type=None)
+        self.parent_repo._add_to_index(tree[self.name])
 
-        tree[self.name].update_references(orig_si_uris)
 
-    def load(self, storage_type=None):
+        tree[self.name].update_references(orig_si_ref)
+
+    def load(self, **kwargs):
         """
         Load the object from the filesystem
 
@@ -1433,49 +1387,45 @@ class RepoLeaf(object):
         -------
         Stored Object
         """
-        store_int = None
-        if storage_type is None:
-            for po in storage_type_priority_order:
-                if po in self.type_to_storage_interface_map:
-                    store_int = self.type_to_storage_interface_map[po]
-                    break
-        else:
-            store_int = self.type_to_storage_interface_map[storage_type]
+        return self.si.load(**kwargs)
 
-
-        return store_int.load()
-
-    def update_references(self, previous_si_uris, delete=False):
+    def update_references(self, previous_si_uri, delete=False):
         # Go through new interfaces, make sure that any interfaces that
         # were referring to this interface before move are updated
-        for ty, si in self.type_to_storage_interface_map.items():
-            md = si.read_metadata(resolve_references=False, user_md=False)
-            # If self has been deleted, we only need to remove references/referrers
-            # so we shouldn't try and get the current URI since it is irrelevant
+        #for ty, si in self.type_to_storage_interface_map.items():
+
+        md = self.si.read_metadata(resolve_references=False, user_md=False)
+        # If self has been deleted, we only need to remove references/referrers
+        # so we shouldn't try and get the current URI since it is irrelevant
+        if not delete:
+            new_si_uri = self.si.reference()
+
+        referrers = md['tree_md'].get('referrers', dict())
+        for referrer_uri, keys in referrers.items():
+            # 'l' is a leaf that references this leaf
+            # -> Since this leaf is moving, we must update l's references
+            #l = reference_to_leaf(self.parent_repo, referrer_uri)
+            l = self.parent_repo.from_reference(referrer_uri)
+            assert isinstance(l, RepoLeaf)
+            l.si.md.remove_reference(previous_si_uri, *keys)
             if not delete:
-                new_si_uri = si.reference()
+                l.si.md.add_reference(new_si_uri, *keys)
 
-            referrers = md['tree_md'].get('referrers', dict())
-            for referrer_uri, keys in referrers.items():
-                # 'l' is a leaf that references this leaf
-                # -> Since this leaf is moving, we must update l's references
-                #l = reference_to_leaf(self.parent_repo, referrer_uri)
-                l = self.parent_repo.from_reference(referrer_uri)
-                assert isinstance(l, StorageInterface)
-                l.remove_reference(previous_si_uris[ty], *keys)
-                if not delete:
-                    l.add_reference(new_si_uri, *keys)
+        references = md['tree_md'].get('references', dict())
+        for reference_uri, keys in references.items():
+            # 'l' is a leaf that this leaf references
+            # -> Since this leaf is moving, we must update l's referrers
+            #l = reference_to_leaf(self.parent_repo, reference_uri)
+            l = self.parent_repo.from_reference(reference_uri)
+            l.si.md.remove_referrer(previous_si_uri, *keys)
+            if not delete:
+                l.si.md.add_referrer(new_si_uri, *keys)
 
-            references = md['tree_md'].get('references', dict())
-            for reference_uri, keys in references.items():
-                # 'l' is a leaf that this leaf references
-                # -> Since this leaf is moving, we must update l's referrers
-                #l = reference_to_leaf(self.parent_repo, reference_uri)
-                l = self.parent_repo.from_reference(reference_uri)
-                l.remove_referrer(previous_si_uris[ty], *keys)
-                if not delete:
-                    l.add_referrer(new_si_uri, *keys)
-
+    def read_metadata(self, most_recent=True, resolve_references=True,
+                      user_md=True):
+        return self.si.read_metadata(most_recent=most_recent,
+                                     resolve_references=resolve_references,
+                                     user_md=user_md)
 
 class RepoTree(object):
     """
@@ -1699,44 +1649,30 @@ Sub-Repositories
                        tags='idt_index', auto_overwrite=True,
                        verbose=False)
 
-    def _remove_from_index(self, leaf, storage_type, missing_err='raise'):
+    def _remove_from_index(self, leaf, missing_err='raise'):
         if missing_err not in ('ignore', 'raise'):
             raise ValueError("Unknown value for param missing_err, expected one of 'raise', 'ignore'")
 
         master_index = self._load_master_index()
-        if storage_type is not None:
-            ref = leaf.reference(storage_type=storage_type)
-            if ref in master_index:
-                del master_index[ref]
-            elif missing_err == 'raise':
-                raise ValueError("'%s' is not in index" % ref)
-        else:
-            for st in leaf.type_to_storage_interface_map.keys():
-                ref = leaf.reference(storage_type=st)
-                if ref in master_index:
-                    del master_index[ref]
-                elif missing_err == 'raise':
-                    raise ValueError("'%s' is not in index" % ref)
+        ref = leaf.reference()
+        if ref in master_index:
+            del master_index[ref]
+        elif missing_err == 'raise':
+            raise ValueError("'%s' is not in index" % ref)
 
         self._write_master_index(master_index)
 
-    def _add_to_index(self, leaf, storage_type):
+    def _add_to_index(self, leaf):
         # Avoid indexing the index
         if leaf.name in (idr_config['master_log'], idr_config['master_index']):
             return
 
         # Open index object in root tree
         #   - Each type has its own index, so use storage type to distinguish
-        vec_map = leaf.get_vector_representation_map()
+        vec_map = leaf.si.get_vector_representation()
         master_index = self._load_master_index()
-        if storage_type is not None:
-            ref = leaf.reference(storage_type=storage_type)
-            master_index[ref] = vec_map[storage_type]
-        else:
-            for st, vec in vec_map.items():
-                ref = leaf.reference(storage_type=st)
-                master_index[ref] = vec
-
+        ref = leaf.reference()
+        master_index[ref] = vec_map
         self._write_master_index(master_index)
 
     def search(self, q_str, top_n=5, interactive=True):
@@ -1862,7 +1798,7 @@ Sub-Repositories
         -------
         None
         """
-        self.__repo_object_table[name].delete(author=author, storage_type=storage_type)
+        self.__repo_object_table[name].delete(author=author)
         if hasattr(self, name) and isinstance(getattr(self, name), RepoLeaf):
             delattr(self, name)
 
@@ -1960,7 +1896,7 @@ Sub-Repositories
 
         self.add_obj_leaf(leaf)
 
-    def load(self, name, storage_type=None):
+    def load(self, name, **kwargs):
         """
         Load the object from the filesystem
 
@@ -1980,9 +1916,7 @@ Sub-Repositories
 
         #return self.__repo_object_table[name].load()
         st = self.__repo_object_table[name]
-        if storage_type is not None:
-            st = st[storage_type]
-        return st.load()
+        return st.load(**kwargs)
 
     def mkrepo(self, name, err_on_exists=False):
         """
@@ -2116,24 +2050,26 @@ Sub-Repositories
             msg = "Parameter 'ref' cannot be None"
             raise ValueError(msg)
 
+        self_root = self.get_root()
         # If the reference is already a leaf
         if isinstance(ref, RepoLeaf):
-            ref = ref._get_highest_priority_si()
-
-        # Reference is already a storage interface
-        if isinstance(ref, StorageInterface):
-            ref_root = ref.parent_leaf.parent_repo.get_root()
-            this_root = self.get_root()
-            if ref_root != this_root:
+            ref_root = ref.parent_repo.get_root()
+            if self_root != ref_root:
                 msg = "The ref object has a different root than this tree."
-                msg += "\nTree root: %s ; Reference's root: %s" % (ref_root, this_root)
+                msg += "\nTree root: %s ; Reference's root: %s" % (ref_root, self_root)
                 raise ValueError(msg)
-            else:
-                return ref
+            return ref
+        elif isinstance(ref, RepoTree):
+            ref_root = ref.get_root()
+            if self_root != ref_root:
+                msg = "The ref object has a different root than this tree."
+                msg += "\nTree root: %s ; Reference's root: %s" % (ref_root, self_root)
+                raise ValueError(msg)
+            return ref
 
         ref = ref.replace(URI_SPEC, '')
         nodes = ref.split('/')
-        root_repo = self.get_root()
+        root_repo = self_root
 
         if root_repo.name != nodes[0]:
             msg = "Reference string is not absolute! Expected root '%s', got '%s'"
