@@ -1171,7 +1171,7 @@ class RepoLeaf(object):
                 setattr(self, l, getattr(self.si, l))
 
         elif len(fnames) > 1:
-            msg = "to many files"
+            msg = "to many files: %s" % "\n".join(fnames)
             raise ValueError(msg)
 
         return self
