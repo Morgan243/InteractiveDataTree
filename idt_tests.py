@@ -138,9 +138,13 @@ class InteractiveDataRepo(unittest.TestCase):
          2001 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
          }
         lvl1.save(df_grps, 'test_gdf', storage_type='ghdf')
-        lvl1.test_gdf[1999]
-        lvl1.test_gdf[2000]
-        lvl1.test_gdf[[1999, 2000]]
+        pd.util.testing.assert_frame_equal(df_grps[1999],
+                                           lvl1.test_gdf[1999])
+        pd.util.testing.assert_frame_equal(df_grps[2000],
+                                           lvl1.test_gdf[2000])
+        concat_df = pd.concat([df_grps[1999], df_grps[2000]])
+        pd.util.testing.assert_frame_equal(concat_df,
+                                           lvl1.test_gdf[[1999, 2000]])
 
     def test_pandas_sample(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)

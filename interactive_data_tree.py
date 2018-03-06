@@ -30,12 +30,12 @@ else:
 def metadata_port(md_hist):
     new_md_hist = list()
     for md in md_hist:
-        user_md = {k:md[k] for k in md.get('extra_metadata_args', dict())}
+        user_md = {k:md.get(k) for k in md.get('extra_metadata_keys', dict())}
 
-        tree_md = {k:md[k] for k in ['obj_type', 'write_time', 'extra_metadata_args',
+        tree_md = {k:md.get(k) for k in ['obj_type', 'write_time', 'extra_metadata_keys',
                                      'references', 'referrers', 'md_update_time']
                   if k in md}
-        si_md = {k:md[k] for k in ['columns', 'dtypes', 'index_head', 'length']
+        si_md = {k:md.get(k) for k in ['columns', 'dtypes', 'index_head', 'length']
                  if k in md}
         si_md = None if all(v is None for v in si_md.values()) else si_md
 
@@ -807,25 +807,33 @@ class HDFGroupStorageInterface(HDFStorageInterface):
 
     @staticmethod
     def __valid_object_for_storage(obj):
-        #return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
-        return isinstance(obj, dict)
+        is_pd = isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        return isinstance(obj, dict) or is_pd
 
     def __getitem__(self, item):
         return self.load(group=item)
 
-    def load(self, group=None):
+    def load(self, group=None, concat=True):
         with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='r')
             hdf_keys = hdf_store.keys()
             prefix = HDFGroupStorageInterface.hdf_data_level + '/'
+            idt_groups = [k.replace(prefix, '') for k in hdf_keys]
             if hasattr(group, '__iter__'):
-                ret = {g:hdf_store.get(prefix + str(g))
-                       for g in group if str(g) in hdf_keys}
-            else:
+                if concat:
+                    #ret = ret if not concat else pd.concat(ret.values())
+                    ret = pd.concat(hdf_store.get(prefix + str(g))
+                                    for g in group if str(g) in idt_groups)
+                else:
+                    ret = {g:hdf_store.get(prefix + str(g))
+                           for g in group if str(g) in idt_groups}
+            elif group is not None:
                 ret = hdf_store[prefix + str(group)]
+            else:
+                ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
         return ret
 
-    def save(self, obj, **md_kwargs):
+    def save(self, obj, group=None, **md_kwargs):
         """
         Locks the object and writes the object and metadata to the
         filesystem.
@@ -840,36 +848,53 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         None
         """
         if not self.__valid_object_for_storage(obj):
-            raise ValueError("Expected Pandas Data object, got %s" % type(obj))
+            msg = "Expected Pandas Data object or Dict of pd objects, got %s" % type(obj)
+            raise ValueError(msg)
+
+        if group is None and not isinstance(obj, dict):
+            msg = "Parameter 'group' must be set if object is not a mapping to pandas objects"
+            raise ValueError(msg)
+        elif group is not None and not isinstance(obj, dict):
+            d_obj = {group:obj}
+        else:
+            d_obj = dict(obj)
 
         with LockFile(self.lock_file):
-            hdf_store = pd.HDFStore(self.path, mode='w')
-            for k, v in obj.items():
+            hdf_store = pd.HDFStore(self.path, mode='a')
+            for k, v in d_obj.items():
                 hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
                 hdf_store.put(hdf_p,
                                  v, format=HDFStorageInterface.hdf_format)
             hdf_store.close()
 
-        self.write_metadata(obj=obj, user_md=md_kwargs)
+        self.write_metadata(obj=d_obj, user_md=md_kwargs)
 
     def write_metadata(self, obj=None, user_md=None,
                        tree_md=None, si_md=None):
         if obj is not None and not self.__valid_object_for_storage(obj):
             raise ValueError("Expected Dict of Pandas Data object, got %s" % type(obj))
 
-        si_md = dict()
+        md = self.read_metadata(resolve_references=False, user_md=False)
+        si_md = md.get('si_md', dict())
+        current_groups = si_md.get('groups', dict())
 
-        o = list(obj.values())[0]
+        new_groups = dict()
+        for g, o in obj.items():
+            g_md = dict()
+            if isinstance(o, pd.DataFrame):
+                g_md['columns'] = list(str(c) for c in o.columns)
+                g_md['dtypes'] = list(str(d) for d in o.dtypes)
 
-        if isinstance(o, pd.DataFrame):
-            si_md['columns'] = list(str(c) for c in o.columns)
-            si_md['dtypes'] = list(str(d) for d in o.dtypes)
+            if o is not None:
+                g_md['index_head'] = list(str(i) for i in o.index[:5])
+                g_md['length'] = len(o)
+            new_groups[g] = g_md
 
-        if o is not None:
-            si_md['index_head'] = list(str(i) for i in o.index[:5])
-            si_md['length'] = len(o)
+        current_groups.update(new_groups)
+        si_md['groups'] = current_groups
 
-        super(HDFStorageInterface, self).write_metadata(obj=o,
+        super(HDFStorageInterface, self).write_metadata(obj=None,
+                                                        tree_md=dict(obj_type='DataFrame Group'),
                                                         user_md=user_md,
                                                         si_md=si_md)
 
@@ -2149,6 +2174,8 @@ Sub-Repositories
         # Slice: First is root, last is type
         for n in nodes[1:]:
             try:
+                if isinstance(curr_node, RepoLeaf):
+                    break
                 curr_node = curr_node[n]
             except KeyError as ke:
                 return None
