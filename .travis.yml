@@ -4,7 +4,7 @@ python:
   - "3.6"
 install:
   - python setup.py install
-  - pip install nose coveralls sklearn scipy numpy
+  - pip install nose coveralls sklearn scipy numpy pygments
 script:
   - nosetests -v idt_tests.py --with-coverage --cover-package=interactive_data_tree
 after_success: coveralls

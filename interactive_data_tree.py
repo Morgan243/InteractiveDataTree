@@ -189,6 +189,7 @@ def leaf_to_reference(obj, to_storage_interface=False):
     else:
         return obj
 
+
 def reference_to_leaf(tree, obj):
     if isinstance(obj, basestring) and is_valid_uri(obj):
         return tree.from_reference(obj)
@@ -429,7 +430,6 @@ class StorageInterface(object):
 
     def md_exists(self):
         return self.md.exists()
-        #return os.path.isfile(self.md_path)
 
     def load(self, **kwargs):
         """
@@ -470,15 +470,8 @@ class StorageInterface(object):
             self.write_metadata(obj=obj, user_md=md_kwargs)
 
     def reference(self):
+        # Hack - References only at the leaf level for now
         return self.parent_leaf.reference()
-        #r_names = self.parent_leaf.parent_repo.get_parent_repo_names()
-        #type_ext = self.storage_name
-        #r_names.append(self.parent_leaf.parent_repo.name)
-        #r_names.append(self.parent_leaf.name)
-        #r_names.append(type_ext)
-        #ref_str = '/'.join(r_names)
-        #ref_str = URI_SPEC + ref_str
-        #return ref_str
 
     def write_metadata(self, obj=None, user_md=None, tree_md=None, si_md=None):
         """
@@ -673,6 +666,7 @@ class HDFStorageInterface(StorageInterface):
     expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
     hdf_data_level = '/data'
     hdf_format = 'fixed'
+    #hdf_format = 'table'
     interface_metadata = ['length', 'columns', 'index_head']
 
     @staticmethod
@@ -801,6 +795,25 @@ class HDFStorageInterface(StorageInterface):
         html_str += div_template
         return html_str
 
+
+class HDFGroupStorageInterface(HDFStorageInterface):
+    storage_name = 'ghdf'
+    extension = 'ghdf'
+    expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
+    hdf_data_level = '/idt_ghdf'
+    hdf_format = 'fixed'
+    #hdf_format = 'table'
+    interface_metadata = ['length', 'columns', 'index_head']
+
+    @staticmethod
+    def __valid_object_for_storage(obj):
+        return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+
+    def load(self, group=None):
+        pass
+
+    def save(self, obj, **kwargs):
+        pass
 
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
@@ -1106,7 +1119,7 @@ class RepoLeaf(object):
         Stored data object
 
         """
-        return self.load(storage_type=None)
+        return self.load()
 
     def __getitem__(self, item):
         return self.si[item]
@@ -1137,9 +1150,6 @@ class RepoLeaf(object):
 
     def _repr_html_(self):
         return self.si._repr_html_()
-
-    def items(self):
-        return self.type_to_storage_interface_map.items()
 
     def reference(self):
         r_names = self.parent_repo.get_parent_repo_names()
@@ -1291,8 +1301,6 @@ class RepoLeaf(object):
                    % (self.parent_repo.name, new_name))
             raise ValueError(msg)
 
-        #orig_si_uris = {ty:si.reference()
-        #                for ty, si in self.type_to_storage_interface_map.items()}
         orig_si_ref = self.reference()
 
         orig_name = self.name
@@ -1601,7 +1609,7 @@ Sub-Repositories
         <h4>Objects</h4>
         %s
         """ % "\n".join("<li>%s [%s]</li>" %
-                        (rt, ",".join(sorted(ty for ty, si in self.__repo_object_table[rt].items())))
+                        (rt, self.__repo_object_table[rt].si.storage_name)
                         for rt in sorted(self.__repo_object_table.keys()))
 
         if self.idr_prop['parent_repo'] is not None:
