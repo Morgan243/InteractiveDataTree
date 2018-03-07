@@ -222,6 +222,11 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual('something_important',
                          lvl1.test_df.read_metadata()['some_random_md'])
 
+        self.assertEqual('foobar', lvl1.test_df.md['comments'])
+        self.assertEqual('tester', lvl1.test_df.md['author'])
+        self.assertEqual('something_important',
+                         lvl1.test_df.md['some_random_md'])
+
     def test_str_reference(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')

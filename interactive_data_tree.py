@@ -8,6 +8,7 @@ import pickle
 import pandas as pd
 import os
 import time
+import warnings
 from datetime import datetime
 from glob import glob
 from ast import parse
@@ -26,6 +27,13 @@ if IS_PYTHON3:
 else:
     prompt_input = raw_input
     fs_except = OSError
+
+try:
+    import tables
+    original_warnings = list(warnings.filters)
+    warnings.simplefilter('ignore', tables.NaturalNameWarning)
+except ImportError as e:
+    print("Unable to import PyTables (tables) - can't use HDF dataframe storage!")
 
 def metadata_port(md_hist):
     new_md_hist = list()
@@ -198,15 +206,34 @@ def reference_to_leaf(tree, obj):
     else:
         return obj
 
+def md_resolve(tree, t_md):
+    for k in t_md.keys():
+        t_md[k] = reference_to_leaf(tree, t_md[k])
+    return t_md
 
 standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
 class Metadata(object):
-    def __init__(self, path, lock_path=None, required_fields=None):
+    def __init__(self, path, lock_path=None, required_fields=None,
+                 resolve_tree=None):
         self.path = path
         self.lock_path = path + '.' + idr_config['lock_extension'] \
             if lock_path is None else lock_path
         self.required_fields = list() if required_fields is None else required_fields
+        self.resolve_tree = resolve_tree
+
+    def __getitem__(self, item):
+        md = self.read_metadata(most_recent=True)
+        md['user_md'] = md_resolve(self.resolve_tree,
+                                   md.get('user_md', dict()))
+        md['si_md'] = md_resolve(self.resolve_tree,
+                                 md.get('si_md', dict()))
+
+        # Order of precedence, in reverse (always have user keys)
+        ret = md.get('tree_md', dict())
+        ret.update(md['si_md'])
+        ret.update(md['user_md'])
+        return ret[item]
 
     @staticmethod
     def __collapse_metadata_deltas(md_entries):
@@ -406,7 +433,8 @@ class StorageInterface(object):
 
         self.md_path = self.path + '.' + idr_config['metadata_extension']
         self.md = Metadata(path=self.md_path,
-                           required_fields=self.required_metadata)
+                           required_fields=self.required_metadata,
+                           resolve_tree=self.parent_leaf.parent_repo)
         self.init()
 
     def __call__(self, *args, **kwargs):
@@ -491,7 +519,7 @@ class StorageInterface(object):
         -------
         None
         """
-        obj = dict() if obj is None else obj
+        #obj = dict() if obj is None else obj
         user_md = dict() if user_md is None else user_md
         tree_md = dict() if tree_md is None else tree_md
         si_md = dict() if si_md is None else si_md
@@ -547,9 +575,10 @@ class StorageInterface(object):
         self.md.write_metadata(**md_kwargs)
 
     def md_resolve(self, t_md):
-        for k in t_md.keys():
-            t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
-        return t_md
+        return md_resolve(self.parent_leaf.parent_repo, t_md=t_md)
+        #for k in t_md.keys():
+        #    t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
+        #return t_md
 
     def read_metadata(self, most_recent=True, resolve_references=True,
                       user_md=True):
@@ -625,7 +654,7 @@ class StorageInterface(object):
 
         extra_keys = tmd.get('extra_metadata_keys', list())
         if len(extra_keys) > 0:
-            html_items = ["<b>%s</b>: %s <br>" % (k, str(umd[k])[:50])
+            html_items = ["<b>%s</b>: %s <br>" % (k, str(umd[k])[:140])
                           for k in extra_keys]
             add_md = """
             <h4>Additional Metadata</h4>
@@ -799,7 +828,7 @@ class HDFStorageInterface(StorageInterface):
 class HDFGroupStorageInterface(HDFStorageInterface):
     storage_name = 'ghdf'
     extension = 'ghdf'
-    expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
+    expose_on_leaf = StorageInterface.expose_on_leaf
     hdf_data_level = '/idt_ghdf'
     hdf_format = 'fixed'
     #hdf_format = 'table'
@@ -807,8 +836,12 @@ class HDFGroupStorageInterface(HDFStorageInterface):
 
     @staticmethod
     def __valid_object_for_storage(obj):
-        is_pd = isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
-        return isinstance(obj, dict) or is_pd
+        #is_pd = isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        #return isinstance(obj, dict) or is_pd
+        is_grp = isinstance(obj, pd.core.groupby.DataFrameGroupBy)
+        valid_dict = isinstance(obj, dict) and all(isinstance(v, (pd.Series, pd.DataFrame))
+                                                   for v in obj.values())
+        return valid_dict or is_grp
 
     def __getitem__(self, item):
         return self.load(group=item)
@@ -834,12 +867,15 @@ class HDFGroupStorageInterface(HDFStorageInterface):
             elif group is not None:
                 ret = hdf_store[prefix + str(group)]
             else:
-                ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
+                if concat:
+                    ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
+                else:
+                    ret = {g:hdf_store.get(g) for g in hdf_keys}
 
             hdf_store.close()
         return ret
 
-    def save(self, obj, group=None, **md_kwargs):
+    def save(self, obj, **md_kwargs):
         """
         Locks the object and writes the object and metadata to the
         filesystem.
@@ -854,26 +890,33 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         None
         """
         if not self.__valid_object_for_storage(obj):
-            msg = "Expected Pandas Data object or Dict of pd objects, got %s" % type(obj)
+            msg = "Expected Pandas DataFrame GroupBy object or Dict of pd objects, got %s" % type(obj)
             raise ValueError(msg)
 
-        if group is None and not isinstance(obj, dict):
-            msg = "Parameter 'group' must be set if object is not a mapping to pandas objects"
-            raise ValueError(msg)
-        elif group is not None and not isinstance(obj, dict):
-            d_obj = {group:obj}
+        if isinstance(obj, dict):
+            d_obj_iter = obj
         else:
-            d_obj = dict(obj)
+            d_obj_iter = {gk: obj.get_group(gk) for gk in obj.groups.keys()}
 
         with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='a')
-            for k, v in d_obj.items():
-                hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
-                hdf_store.put(hdf_p,
-                                 v, format=HDFStorageInterface.hdf_format)
+            try:
+                from tqdm import tqdm
+                with tqdm(total=len(d_obj_iter)) as pbar:
+                    for k, v in d_obj_iter.items():
+                        pbar.set_description("Storing group " + str(k))
+                        hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                        hdf_store.put(hdf_p,
+                                         v, format=HDFStorageInterface.hdf_format)
+                        pbar.update(1)
+            except ImportError:
+                for k, v in d_obj_iter.items():
+                    hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                    hdf_store.put(hdf_p,
+                                     v, format=HDFStorageInterface.hdf_format)
             hdf_store.close()
 
-        self.write_metadata(obj=d_obj, user_md=md_kwargs)
+        self.write_metadata(obj=d_obj_iter, user_md=md_kwargs)
 
     def update(self, **grps):
         if any(not isinstance(v, (pd.Series, pd.DataFrame))
@@ -905,19 +948,65 @@ class HDFGroupStorageInterface(HDFStorageInterface):
             if isinstance(o, pd.DataFrame):
                 g_md['columns'] = list(str(c) for c in o.columns)
                 g_md['dtypes'] = list(str(d) for d in o.dtypes)
+                si_md['columns'] = list(set(si_md.get('columns', list()) + g_md['columns']))
+                si_md['dtypes'] = list(set(si_md.get('dtypes', list()) + g_md['dtypes']))
 
             if o is not None:
                 g_md['index_head'] = list(str(i) for i in o.index[:5])
                 g_md['length'] = len(o)
+                si_md['length'] = si_md.get('length', 0) + g_md['length']
             new_groups[g] = g_md
 
         current_groups.update(new_groups)
         si_md['groups'] = current_groups
+        si_md['group_names'] = list(sorted(current_groups.keys()))
 
-        super(HDFStorageInterface, self).write_metadata(obj=None,
-                                                        tree_md=dict(obj_type='DataFrame Group'),
-                                                        user_md=user_md,
-                                                        si_md=si_md)
+        StorageInterface.write_metadata(self,
+                                        obj=None,
+                                        tree_md=dict(obj_type='DataFrame Group'),
+                                        user_md=user_md,
+                                        si_md=si_md)
+
+    def _repr_html_(self):
+        md = self.read_metadata(user_md=False)
+
+        basic_descrip = StorageInterface._build_html_body_(md)
+        smd = md['si_md']
+        groups = smd['groups']
+
+        group_names = list(sorted(groups.keys()))
+        if len(group_names) > 5:
+            group_str = ", ".join(group_names[:2]) + " ... " + ", ".join(group_names[-2:])
+        else:
+            group_str = ", ".join(group_names)
+
+        col_names = list(sorted(smd.get('columns', list())))
+        if len(col_names) > 10:
+            col_str = ", ".join(col_names[:5]) + " ... " + ", ".join(col_names[-5:])
+        else:
+            col_str = ", ".join(col_names)
+
+
+        extra_descrip = """
+        <b>Groups ({n_groups:,})</b> : {groups} <br>
+        <b>Total Entries Across Groups </b> : {num_entries:,} <br>
+        <b>Unique Columns</b> ({n_cols:,}) : {col_sample} <br>
+        """.format(
+            groups=group_str,
+            n_groups=len(group_names),
+            num_entries=smd.get('length', -1),
+            n_cols=len(col_names),
+            col_sample=col_str
+        )
+
+
+        div_template = StorageInterface._get_two_column_div_template()
+        div_template = div_template.format(left_column=basic_descrip,
+                                           right_column=extra_descrip)
+
+        html_str = """<h2> {name} </h2>""".format(name=self.name)
+        html_str += div_template
+        return html_str
 
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
@@ -1187,7 +1276,7 @@ register_storage_interface(ModelStorageInterface, 'model', 2)
 register_storage_interface(SQLStorageInterface, 'sql', 3,
                            types=[SQL])
 register_storage_interface(HDFGroupStorageInterface, 'ghdf', 4,
-                           types=[])
+                           types=[pd.core.groupby.DataFrameGroupBy])
 
 
 class RepoLeaf(object):
@@ -1233,6 +1322,9 @@ class RepoLeaf(object):
 
     def __setitem__(self, key, value):
         self.si[key] = value
+
+    def __str__(self):
+        return self.reference()
 
     def __update_doc_str(self):
         docs = self.name + "\n\n"
@@ -1287,6 +1379,7 @@ class RepoLeaf(object):
                 self.si = si_cls(parent_leaf=self)
 
             setattr(self, self.si.storage_name, self.si)
+            self.md = self.si.md
             for l in self.si.expose_on_leaf:
                 setattr(self, l, getattr(self.si, l))
 
