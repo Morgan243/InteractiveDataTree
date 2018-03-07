@@ -813,13 +813,17 @@ class HDFGroupStorageInterface(HDFStorageInterface):
     def __getitem__(self, item):
         return self.load(group=item)
 
+    def __setitem__(self, key, value):
+        kargs = {str(key):value}
+        self.update(**kargs)
+
     def load(self, group=None, concat=True):
         with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='r')
             hdf_keys = hdf_store.keys()
             prefix = HDFGroupStorageInterface.hdf_data_level + '/'
             idt_groups = [k.replace(prefix, '') for k in hdf_keys]
-            if hasattr(group, '__iter__'):
+            if hasattr(group, '__iter__') and not isinstance(group, basestring):
                 if concat:
                     #ret = ret if not concat else pd.concat(ret.values())
                     ret = pd.concat(hdf_store.get(prefix + str(g))
@@ -831,6 +835,8 @@ class HDFGroupStorageInterface(HDFStorageInterface):
                 ret = hdf_store[prefix + str(group)]
             else:
                 ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
+
+            hdf_store.close()
         return ret
 
     def save(self, obj, group=None, **md_kwargs):
@@ -868,6 +874,21 @@ class HDFGroupStorageInterface(HDFStorageInterface):
             hdf_store.close()
 
         self.write_metadata(obj=d_obj, user_md=md_kwargs)
+
+    def update(self, **grps):
+        if any(not isinstance(v, (pd.Series, pd.DataFrame))
+               for v in grps.values()):
+            msg = "All parameter values must be Pandas objects"
+            raise ValueError(msg)
+
+        d_grps = dict(grps)
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='a')
+            for k, v in d_grps.items():
+                hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                hdf_store.put(hdf_p,
+                                 v, format=HDFStorageInterface.hdf_format)
+            hdf_store.close()
 
     def write_metadata(self, obj=None, user_md=None,
                        tree_md=None, si_md=None):
@@ -1209,6 +1230,9 @@ class RepoLeaf(object):
 
     def __getitem__(self, item):
         return self.si[item]
+
+    def __setitem__(self, key, value):
+        self.si[key] = value
 
     def __update_doc_str(self):
         docs = self.name + "\n\n"

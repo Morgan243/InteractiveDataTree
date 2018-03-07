@@ -146,6 +146,18 @@ class InteractiveDataRepo(unittest.TestCase):
         pd.util.testing.assert_frame_equal(concat_df,
                                            lvl1.test_gdf[[1999, 2000]])
 
+
+        import numpy as np
+        lvl1.test_gdf[2002] = df_grps[1999] * 3.3
+        pd.util.testing.assert_frame_equal(lvl1.test_gdf[2002],
+                                           df_grps[1999] *3.3)
+
+
+        lvl1.test_gdf['a_series'] = df_grps[2001]['a']
+        pd.util.testing.assert_series_equal(lvl1.test_gdf['a_series'],
+                                            df_grps[2001]['a'])
+
+
     def test_pandas_sample(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
