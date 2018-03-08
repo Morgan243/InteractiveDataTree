@@ -74,8 +74,11 @@ class Metadata(object):
         # TODO: track first/last time a key was updated in MD
         latest_md = dict()
         for md_d in md_entries:
+            # Go through top level : tree_md, si_md, user_md
             for k in md_d.keys():
+                # Get the current 'latest' entry
                 tmp = latest_md.get(k, dict())
+
                 if md_d[k] is not None and len(md_d[k]) > 0:
                     tmp.update(md_d[k])
                 latest_md[k] = tmp

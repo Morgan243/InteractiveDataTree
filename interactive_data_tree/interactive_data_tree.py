@@ -479,8 +479,8 @@ class HDFStorageInterface(StorageInterface):
         smd = md['si_md']
 
         extra_descrip = """
-        <b>Num Entries </b> : {num_entries} <br>
-        <b>Columns</b> ({n_cols}) : {col_sample} <br>
+        <b>Num Entries </b> : {num_entries:,} <br>
+        <b>Columns</b> ({n_cols:,}) : {col_sample} <br>
         <b>Index Head</b> : {ix_head} <br>
         """.format(num_entries=smd.get('length', -1),
                    n_cols=len(smd.get('columns', [])),
@@ -1037,7 +1037,7 @@ class RepoLeaf(object):
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
 
-        fnames = [p for p in glob(self.save_path + '*')
+        fnames = [p for p in glob(self.save_path + '.*')
                         if p[-len(mde):] != mde
                         and p[-len(repe):] != repe]
 
@@ -1495,7 +1495,7 @@ Sub-Repositories
             parent_repo_str = "Root (%s)" % self.name
         html = """
         {repo_parent_header}
-        <div style="width: 55%;">
+        <div style="width: 75%;">
             <div style="float:left; width: 50%; height:100%; overflow: auto">
                 {repos_list}
             </div>

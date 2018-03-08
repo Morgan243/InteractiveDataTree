@@ -159,7 +159,6 @@ class InteractiveDataRepo(unittest.TestCase):
         pd.util.testing.assert_series_equal(lvl1.test_gdf['a_series'],
                                             df_grps[2001]['a'])
 
-
     def test_pandas_sample(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
@@ -485,6 +484,18 @@ class InteractiveDataRepo(unittest.TestCase):
         md = lvl1.foobar.read_metadata()
         self.assertIsInstance(md['other_data'], idt.RepoLeaf)
         self.assertEqual(md['other_data'], lvl1.barfoo)
+        # Check that the referrer is set in the source (upstream)
+        md_b = lvl1.barfoo.read_metadata(user_md=False)
+        self.assertIn(lvl1.foobar.reference(), md_b['tree_md']['referrers'])
+
+        # Save over the original, ensure results are unchanged
+        lvl1.save('lvl 2 string', name='barfoo', auto_overwrite=True)
+        md = lvl1.foobar.read_metadata()
+        self.assertIsInstance(md['other_data'], idt.RepoLeaf)
+        self.assertEqual(md['other_data'], lvl1.barfoo)
+        # Check that the referrer is set in the source (upstream)
+        md_b = lvl1.barfoo.read_metadata(user_md=False)
+        self.assertIn(lvl1.foobar.reference(), md_b['tree_md']['referrers'])
 
         # Now, delete the referenced data
         lvl1.barfoo.delete(author='unittests')
