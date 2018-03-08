@@ -19,3 +19,4 @@ base_master_log_entry = dict(repo_tree=None,
                              repo_operation=None,
                              timestamp=None,
                              notebook_path=None, author=None)
+

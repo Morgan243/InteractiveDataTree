@@ -8,36 +8,15 @@ import pickle
 import pandas as pd
 import os
 import time
+import warnings
 from datetime import datetime
 from glob import glob
-from ast import parse
 import sys
 
 from .metadata import Metadata, metadata_port, standard_metadata
 from .lockfile import LockFile
 from .conf import *
-
-IS_PYTHON3 = sys.version_info > (3, 0)
-try:
-  basestring
-except NameError:
-  basestring = str
-
-if IS_PYTHON3:
-    fs_except = FileExistsError
-    prompt_input = input
-else:
-    prompt_input = raw_input
-    fs_except = OSError
-
-
-def isidentifier(name):
-    try:
-        parse('{} = None'.format(name))
-        return True
-    except (SyntaxError, ValueError, TypeError) as e:
-        return False
-
+from .utils import *
 
 # - monkey patching docstrings
 # - add a log of all operations in root
@@ -48,14 +27,6 @@ def isidentifier(name):
 # - Enable references between objects
 #   - Simply store a set of dot paths in the metadata
 # - Log interface for easier adjustable verbosity and logging
-def is_valid_uri(obj):
-    if not isinstance(obj, basestring):
-        return False
-    elif obj[:len(URI_SPEC)] == URI_SPEC:
-        return True
-    else:
-        return False
-
 
 def message_user(txt):
     print(txt)
@@ -107,6 +78,10 @@ def reference_to_leaf(tree, obj):
     else:
         return obj
 
+def md_resolve(tree, t_md):
+    for k in t_md.keys():
+        t_md[k] = reference_to_leaf(tree, t_md[k])
+    return t_md
 
 
 class StorageInterface(object):
@@ -130,7 +105,8 @@ class StorageInterface(object):
 
         self.md_path = self.path + '.' + idr_config['metadata_extension']
         self.md = Metadata(path=self.md_path,
-                           required_fields=self.required_metadata)
+                           required_fields=self.required_metadata,
+                           resolve_tree=self.parent_leaf.parent_repo)
         self.init()
 
     def __call__(self, *args, **kwargs):
@@ -215,7 +191,7 @@ class StorageInterface(object):
         -------
         None
         """
-        obj = dict() if obj is None else obj
+        #obj = dict() if obj is None else obj
         user_md = dict() if user_md is None else user_md
         tree_md = dict() if tree_md is None else tree_md
         si_md = dict() if si_md is None else si_md
@@ -271,9 +247,10 @@ class StorageInterface(object):
         self.md.write_metadata(**md_kwargs)
 
     def md_resolve(self, t_md):
-        for k in t_md.keys():
-            t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
-        return t_md
+        return md_resolve(self.parent_leaf.parent_repo, t_md=t_md)
+        #for k in t_md.keys():
+        #    t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
+        #return t_md
 
     def read_metadata(self, most_recent=True, resolve_references=True,
                       user_md=True):
@@ -349,7 +326,7 @@ class StorageInterface(object):
 
         extra_keys = tmd.get('extra_metadata_keys', list())
         if len(extra_keys) > 0:
-            html_items = ["<b>%s</b>: %s <br>" % (k, str(umd[k])[:50])
+            html_items = ["<b>%s</b>: %s <br>" % (k, str(umd[k])[:140])
                           for k in extra_keys]
             add_md = """
             <h4>Additional Metadata</h4>
@@ -523,7 +500,7 @@ class HDFStorageInterface(StorageInterface):
 class HDFGroupStorageInterface(HDFStorageInterface):
     storage_name = 'ghdf'
     extension = 'ghdf'
-    expose_on_leaf = ['sample'] + StorageInterface.expose_on_leaf
+    expose_on_leaf = StorageInterface.expose_on_leaf
     hdf_data_level = '/idt_ghdf'
     hdf_format = 'fixed'
     #hdf_format = 'table'
@@ -531,13 +508,177 @@ class HDFGroupStorageInterface(HDFStorageInterface):
 
     @staticmethod
     def __valid_object_for_storage(obj):
-        return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        #is_pd = isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        #return isinstance(obj, dict) or is_pd
+        is_grp = isinstance(obj, pd.core.groupby.DataFrameGroupBy)
+        valid_dict = isinstance(obj, dict) and all(isinstance(v, (pd.Series, pd.DataFrame))
+                                                   for v in obj.values())
+        return valid_dict or is_grp
 
-    def load(self, group=None):
-        pass
+    def __getitem__(self, item):
+        return self.load(group=item)
 
-    def save(self, obj, **kwargs):
-        pass
+    def __setitem__(self, key, value):
+        kargs = {str(key):value}
+        self.update(**kargs)
+
+    def load(self, group=None, concat=True):
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='r')
+            hdf_keys = hdf_store.keys()
+            prefix = HDFGroupStorageInterface.hdf_data_level + '/'
+            idt_groups = [k.replace(prefix, '') for k in hdf_keys]
+            if hasattr(group, '__iter__') and not isinstance(group, basestring):
+                if concat:
+                    #ret = ret if not concat else pd.concat(ret.values())
+                    ret = pd.concat(hdf_store.get(prefix + str(g))
+                                    for g in group if str(g) in idt_groups)
+                else:
+                    ret = {g:hdf_store.get(prefix + str(g))
+                           for g in group if str(g) in idt_groups}
+            elif group is not None:
+                ret = hdf_store[prefix + str(group)]
+            else:
+                if concat:
+                    ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
+                else:
+                    ret = {g:hdf_store.get(g) for g in hdf_keys}
+
+            hdf_store.close()
+        return ret
+
+    def save(self, obj, **md_kwargs):
+        """
+        Locks the object and writes the object and metadata to the
+        filesystem.
+
+        Parameters
+        ----------
+        obj : Serializable Python object
+        md_kwargs : Key-value pairs to include in the metadata entry
+
+        Returns
+        -------
+        None
+        """
+        if not self.__valid_object_for_storage(obj):
+            msg = "Expected Pandas DataFrame GroupBy object or Dict of pd objects, got %s" % type(obj)
+            raise ValueError(msg)
+
+        if isinstance(obj, dict):
+            d_obj_iter = obj
+        else:
+            d_obj_iter = {gk: obj.get_group(gk) for gk in obj.groups.keys()}
+
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='a')
+            try:
+                from tqdm import tqdm
+                with tqdm(total=len(d_obj_iter)) as pbar:
+                    for k, v in d_obj_iter.items():
+                        pbar.set_description("Storing group " + str(k))
+                        hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                        hdf_store.put(hdf_p,
+                                         v, format=HDFStorageInterface.hdf_format)
+                        pbar.update(1)
+            except ImportError:
+                for k, v in d_obj_iter.items():
+                    hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                    hdf_store.put(hdf_p,
+                                     v, format=HDFStorageInterface.hdf_format)
+            hdf_store.close()
+
+        self.write_metadata(obj=d_obj_iter, user_md=md_kwargs)
+
+    def update(self, **grps):
+        if any(not isinstance(v, (pd.Series, pd.DataFrame))
+               for v in grps.values()):
+            msg = "All parameter values must be Pandas objects"
+            raise ValueError(msg)
+
+        d_grps = dict(grps)
+        with LockFile(self.lock_file):
+            hdf_store = pd.HDFStore(self.path, mode='a')
+            for k, v in d_grps.items():
+                hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
+                hdf_store.put(hdf_p,
+                                 v, format=HDFStorageInterface.hdf_format)
+            hdf_store.close()
+
+    def write_metadata(self, obj=None, user_md=None,
+                       tree_md=None, si_md=None):
+        if obj is not None and not self.__valid_object_for_storage(obj):
+            raise ValueError("Expected Dict of Pandas Data object, got %s" % type(obj))
+
+        md = self.read_metadata(resolve_references=False, user_md=False)
+        si_md = md.get('si_md', dict())
+        current_groups = si_md.get('groups', dict())
+
+        new_groups = dict()
+        for g, o in obj.items():
+            g_md = dict()
+            if isinstance(o, pd.DataFrame):
+                g_md['columns'] = list(str(c) for c in o.columns)
+                g_md['dtypes'] = list(str(d) for d in o.dtypes)
+                si_md['columns'] = list(set(si_md.get('columns', list()) + g_md['columns']))
+                si_md['dtypes'] = list(set(si_md.get('dtypes', list()) + g_md['dtypes']))
+
+            if o is not None:
+                g_md['index_head'] = list(str(i) for i in o.index[:5])
+                g_md['length'] = len(o)
+                si_md['length'] = si_md.get('length', 0) + g_md['length']
+            new_groups[g] = g_md
+
+        current_groups.update(new_groups)
+        si_md['groups'] = current_groups
+        si_md['group_names'] = list(sorted(current_groups.keys()))
+
+        StorageInterface.write_metadata(self,
+                                        obj=None,
+                                        tree_md=dict(obj_type='DataFrame Group'),
+                                        user_md=user_md,
+                                        si_md=si_md)
+
+    def _repr_html_(self):
+        md = self.read_metadata(user_md=False)
+
+        basic_descrip = StorageInterface._build_html_body_(md)
+        smd = md['si_md']
+        groups = smd['groups']
+
+        group_names = list(sorted(groups.keys()))
+        if len(group_names) > 5:
+            group_str = ", ".join(group_names[:2]) + " ... " + ", ".join(group_names[-2:])
+        else:
+            group_str = ", ".join(group_names)
+
+        col_names = list(sorted(smd.get('columns', list())))
+        if len(col_names) > 10:
+            col_str = ", ".join(col_names[:5]) + " ... " + ", ".join(col_names[-5:])
+        else:
+            col_str = ", ".join(col_names)
+
+
+        extra_descrip = """
+        <b>Groups ({n_groups:,})</b> : {groups} <br>
+        <b>Total Entries Across Groups </b> : {num_entries:,} <br>
+        <b>Unique Columns</b> ({n_cols:,}) : {col_sample} <br>
+        """.format(
+            groups=group_str,
+            n_groups=len(group_names),
+            num_entries=smd.get('length', -1),
+            n_cols=len(col_names),
+            col_sample=col_str
+        )
+
+
+        div_template = StorageInterface._get_two_column_div_template()
+        div_template = div_template.format(left_column=basic_descrip,
+                                           right_column=extra_descrip)
+
+        html_str = """<h2> {name} </h2>""".format(name=self.name)
+        html_str += div_template
+        return html_str
 
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
@@ -801,10 +942,13 @@ def register_storage_interface(interface_class, name,
 
 register_storage_interface(HDFStorageInterface, 'hdf', 0,
                            types=[pd.DataFrame, pd.Series])
+
 register_storage_interface(StorageInterface, 'pickle', 1)
 register_storage_interface(ModelStorageInterface, 'model', 2)
 register_storage_interface(SQLStorageInterface, 'sql', 3,
                            types=[SQL])
+register_storage_interface(HDFGroupStorageInterface, 'ghdf', 4,
+                           types=[pd.core.groupby.DataFrameGroupBy])
 
 
 class RepoLeaf(object):
@@ -847,6 +991,12 @@ class RepoLeaf(object):
 
     def __getitem__(self, item):
         return self.si[item]
+
+    def __setitem__(self, key, value):
+        self.si[key] = value
+
+    def __str__(self):
+        return self.reference()
 
     def __update_doc_str(self):
         docs = self.name + "\n\n"
@@ -901,6 +1051,7 @@ class RepoLeaf(object):
                 self.si = si_cls(parent_leaf=self)
 
             setattr(self, self.si.storage_name, self.si)
+            self.md = self.si.md
             for l in self.si.expose_on_leaf:
                 setattr(self, l, getattr(self.si, l))
 
@@ -1812,6 +1963,8 @@ Sub-Repositories
         # Slice: First is root, last is type
         for n in nodes[1:]:
             try:
+                if isinstance(curr_node, RepoLeaf):
+                    break
                 curr_node = curr_node[n]
             except KeyError as ke:
                 return None

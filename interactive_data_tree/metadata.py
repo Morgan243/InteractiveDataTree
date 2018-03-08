@@ -13,6 +13,7 @@ from ast import parse
 import sys
 from .conf import *
 from .lockfile import LockFile
+from .utils import *
 
 def metadata_port(md_hist):
     new_md_hist = list()
@@ -33,14 +34,32 @@ def metadata_port(md_hist):
     return new_md_hist
 
 
+
 standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
+
+############################
 class Metadata(object):
-    def __init__(self, path, lock_path=None, required_fields=None):
+    def __init__(self, path, lock_path=None, required_fields=None,
+                 resolve_tree=None):
         self.path = path
         self.lock_path = path + '.' + idr_config['lock_extension'] \
             if lock_path is None else lock_path
         self.required_fields = list() if required_fields is None else required_fields
+        self.resolve_tree = resolve_tree
+
+    def __getitem__(self, item):
+        md = self.read_metadata(most_recent=True)
+        md['user_md'] = md_resolve(self.resolve_tree,
+                                   md.get('user_md', dict()))
+        md['si_md'] = md_resolve(self.resolve_tree,
+                                 md.get('si_md', dict()))
+
+        # Order of precedence, in reverse (always have user keys)
+        ret = md.get('tree_md', dict())
+        ret.update(md['si_md'])
+        ret.update(md['user_md'])
+        return ret[item]
 
     @staticmethod
     def __collapse_metadata_deltas(md_entries):
@@ -86,7 +105,6 @@ class Metadata(object):
         """
         Locks metadata file, reads current contents, and appends
         md_kwargs key-value pairs to the metadata.
-
         Parameters
         ----------
         obj : object to which the metadata pertains
@@ -95,7 +113,6 @@ class Metadata(object):
             Derived classes can include other automatic metadata
             extraction (see HDF).
         md_kwargs : Key-value pairs to include in the metadata entry
-
         Returns
         -------
         None
