@@ -11,7 +11,7 @@ from datetime import datetime
 from glob import glob
 from ast import parse
 import sys
-from interactive_data_tree.conf import *
+from .conf import *
 
 
 IS_PYTHON3 = sys.version_info > (3, 0)

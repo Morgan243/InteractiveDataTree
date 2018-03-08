@@ -11,8 +11,8 @@ from datetime import datetime
 from glob import glob
 from ast import parse
 import sys
-from interactive_data_tree.conf import *
-from interactive_data_tree.lockfile import LockFile
+from .conf import *
+from .lockfile import LockFile
 
 def metadata_port(md_hist):
     new_md_hist = list()

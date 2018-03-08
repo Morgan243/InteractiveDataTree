@@ -13,9 +13,9 @@ from glob import glob
 from ast import parse
 import sys
 
-from interactive_data_tree.metadata import Metadata, metadata_port, standard_metadata
-from interactive_data_tree.lockfile import LockFile
-from interactive_data_tree.conf import *
+from .metadata import Metadata, metadata_port, standard_metadata
+from .lockfile import LockFile
+from .conf import *
 
 IS_PYTHON3 = sys.version_info > (3, 0)
 try:
