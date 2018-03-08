@@ -3,7 +3,8 @@ import pickle
 import mock
 import pandas as pd
 import unittest
-import interactive_data_tree as idt
+#import interactive_data_tree as idt
+from interactive_data_tree import interactive_data_tree as idt
 import tempfile
 import shutil
 import sys
@@ -11,7 +12,7 @@ import collections
 
 EXEC_PYTHON3 = sys.version_info > (3, 0)
 # Patching the builtin directly doesn't seem to always work in Python 2
-builtins_input_mock_str = 'interactive_data_tree.prompt_input'
+builtins_input_mock_str = 'interactive_data_tree.interactive_data_tree.prompt_input'
 
 class InteractiveDataRepo(unittest.TestCase):
     @staticmethod

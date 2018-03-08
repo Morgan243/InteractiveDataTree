@@ -13,6 +13,9 @@ from glob import glob
 from ast import parse
 import sys
 
+from interactive_data_tree.metadata import Metadata, metadata_port, standard_metadata
+from interactive_data_tree.lockfile import LockFile
+from interactive_data_tree.conf import *
 
 IS_PYTHON3 = sys.version_info > (3, 0)
 try:
@@ -27,24 +30,6 @@ else:
     prompt_input = raw_input
     fs_except = OSError
 
-def metadata_port(md_hist):
-    new_md_hist = list()
-    for md in md_hist:
-        user_md = {k:md[k] for k in md.get('extra_metadata_args', dict())}
-
-        tree_md = {k:md[k] for k in ['obj_type', 'write_time', 'extra_metadata_args',
-                                     'references', 'referrers', 'md_update_time']
-                  if k in md}
-        si_md = {k:md[k] for k in ['columns', 'dtypes', 'index_head', 'length']
-                 if k in md}
-        si_md = None if all(v is None for v in si_md.values()) else si_md
-
-        new_md = dict(user_md=user_md,
-                      tree_md=tree_md,
-                      si_md=si_md)
-        new_md_hist.append(new_md)
-    return new_md_hist
-
 
 def isidentifier(name):
     try:
@@ -53,25 +38,6 @@ def isidentifier(name):
     except (SyntaxError, ValueError, TypeError) as e:
         return False
 
-URI_SPEC = 'datatree://'
-idr_config = dict(storage_root_dir=os.path.join(os.path.expanduser("~"), '.idt_root'),
-                  master_log='LOG', master_index='INDEX',
-                  repo_extension='repo', metadata_extension='mdjson',
-                  lock_extension='lock',
-                  date_format='%h %d %Y (%I:%M:%S %p)',
-                  md_vers='0.1',
-                  enable_queries=True)
-
-# Set values in this dict to be used as defaults in metadata
-shared_metadata = dict(notebook_name=None, author=None, project=None)
-md_fields = ['user_md', 'tree_md', 'si_md']
-
-base_master_log_entry = dict(repo_tree=None,
-                             repo_leaf=None,
-                             storage_type=None,
-                             repo_operation=None,
-                             timestamp=None,
-                             notebook_path=None, author=None)
 
 # - monkey patching docstrings
 # - add a log of all operations in root
@@ -122,63 +88,6 @@ def basic_tokenizer(str_data, ngram_range=(1, 1)):
 
 
 #####
-class LockFile(object):
-    """
-    A context object (use in 'with' statement) that attempts to create
-    a lock file on entry, with blocking/retrying until successful
-    """
-    def __init__(self, path, poll_interval=1,
-                 wait_msg=None):
-        """
-        Parameters
-        ----------
-        path : lock file path as string
-        poll_interval : integer
-            Time between retries while blocking on lock file
-        wait_msg : str
-            Message to print to user if this lock starts blocking
-        """
-        self.path = path
-        self.poll_interval = poll_interval
-        self.wait_msg = wait_msg
-        self.locked = False
-
-        # Make sure the directory exists
-        dirs = os.path.split(path)[:-1]
-        p = os.path.join(*dirs)
-        valid_path = os.path.isdir(p)
-        if not valid_path:
-            msg = "The lock path '%s' is not since '%s' is not a directory"
-            raise ValueError(msg % (path, p))
-
-    def __enter__(self):
-        self.lock()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.unlock()
-
-    def unlock(self):
-        os.close(self.fs_lock)
-        os.remove(self.path)
-        return self
-
-    def lock(self):
-        block_count = 0
-        while True:
-            try:
-                self.fs_lock = os.open(self.path,
-                                       os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                break
-            except fs_except as e:
-                block_count += 1
-                if self.wait_msg is not None:
-                    print("[%d] %s" % (block_count, self.wait_msg))
-                time.sleep(self.poll_interval)
-        self.locked = True
-        return self
-
-
-
 def leaf_to_reference(obj, to_storage_interface=False):
     if isinstance(obj, basestring):
         return obj
@@ -199,191 +108,6 @@ def reference_to_leaf(tree, obj):
         return obj
 
 
-standard_metadata = ['author', 'comments', 'tags',
-                     'write_time', 'obj_type']
-class Metadata(object):
-    def __init__(self, path, lock_path=None, required_fields=None):
-        self.path = path
-        self.lock_path = path + '.' + idr_config['lock_extension'] \
-            if lock_path is None else lock_path
-        self.required_fields = list() if required_fields is None else required_fields
-
-    @staticmethod
-    def __collapse_metadata_deltas(md_entries):
-        if not isinstance(md_entries, list):
-            msg = "Expected md_entries to be a list, got %s instead"
-            raise ValueError(msg % str(type(md_entries)))
-
-        if not all(isinstance(d, dict) for d in md_entries):
-            msg = "Entries in metadata must be dict"
-            raise ValueError(msg)
-
-        # TODO: track first/last time a key was updated in MD
-        latest_md = dict()
-        for md_d in md_entries:
-            for k in md_d.keys():
-                tmp = latest_md.get(k, dict())
-                if md_d[k] is not None and len(md_d[k]) > 0:
-                    tmp.update(md_d[k])
-                latest_md[k] = tmp
-        return latest_md
-
-    def get_missing_metadata_fields(self, md):
-        if not isinstance(md, dict):
-            raise ValueError("Expected dict, got %s" % str(type(md)))
-
-        if StorageInterface.required_metadata is None:
-            req_md = list()
-        elif not isinstance(StorageInterface.required_metadata, list):
-            req_md = [self.required_fields]
-        else:
-            req_md = self.required_fields
-
-        missing = list()
-        for rm in req_md:
-            if rm not in md:
-                missing.append(rm)
-        return missing
-
-    def exists(self):
-        return os.path.isfile(self.path)
-
-    def write_metadata(self, **kwargs):
-        """
-        Locks metadata file, reads current contents, and appends
-        md_kwargs key-value pairs to the metadata.
-
-        Parameters
-        ----------
-        obj : object to which the metadata pertains
-            If the object is provided, then the type name of
-            the object can be stored in the metadata automatically.
-            Derived classes can include other automatic metadata
-            extraction (see HDF).
-        md_kwargs : Key-value pairs to include in the metadata entry
-
-        Returns
-        -------
-        None
-        """
-
-        with LockFile(self.lock_path):
-            md = self.read_metadata(most_recent=False, lock=False)
-            most_recent_md = Metadata.__collapse_metadata_deltas(md)
-
-            # Remove key values that we already have stored (key AND value match)
-            for f in md_fields:
-                for k, v in most_recent_md.get(f, dict()).items():
-                    if k in kwargs.get(f, dict()) and v == kwargs[f][k]:
-                        del kwargs[f][k]
-
-            md.append(kwargs)
-            with open(self.path, 'w') as f:
-                json.dump(md, f)
-
-    def read_metadata(self, most_recent=True, lock=True):
-        if not os.path.isfile(self.path):
-            md = [dict(tree_md=dict(md_vers=idr_config['md_vers']))]
-        else:
-            if lock:
-                with LockFile(self.lock_path):
-                    with open(self.path, 'r') as f:
-                        md = json.load(f)
-            else:
-                with open(self.path, 'r') as f:
-                    md = json.load(f)
-
-        if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
-            md = metadata_port(md)
-
-        if most_recent:
-            md = Metadata.__collapse_metadata_deltas(md)
-
-        return md
-
-    def add_reference(self, reference_uri, *reference_md_keys):
-        with LockFile(self.lock_path):
-            md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]
-            references = last_md['tree_md'].get('references', dict())
-            keys = references.get(reference_uri, list())
-
-            references[reference_uri] = list(set(keys + list(reference_md_keys)))
-            for k in references[reference_uri]:
-                last_md['user_md'][k] = reference_uri
-
-            last_md['tree_md']['references'] = references
-            md_hist[-1] = last_md
-
-            with open(self.path, 'w')  as f:
-                json.dump(md_hist, f)
-
-    def remove_reference(self, reference_uri, *reference_md_keys):
-        with LockFile(self.lock_path):
-            md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]
-            references = last_md['tree_md'].get('references', dict())
-
-            if reference_uri not in references:
-                msg = "URI '%s' not in '%s' references" % (reference_uri, 'UNK')
-                raise ValueError(msg)
-
-            keys = references[reference_uri]
-            for k in keys:
-                last_md['user_md'][k] = '[DELETED]' + str(last_md['user_md'][k])
-
-            del references[reference_uri]
-            last_md['tree_md']['references'] = references
-            md_hist[-1] = last_md
-
-            with open(self.path, 'w')  as f:
-                json.dump(md_hist, f)
-
-    def add_referrer(self, referrer_uri, *referrer_md_keys):
-        with LockFile(self.lock_path):
-            md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]
-
-            # Referrers maps a leaf URI to keys in the metadata
-            referrers = last_md['tree_md'].get('referrers', dict())
-
-            if referrer_uri not in referrers:
-                referrers[referrer_uri] = list()
-
-            # Add keys that were set to this reference, use set to remove duplicates
-            referrers[referrer_uri].extend(referrer_md_keys)
-            referrers[referrer_uri] = list(set(referrers[referrer_uri]))
-
-            last_md['tree_md']['referrers'] = referrers
-            md_hist[-1] = last_md
-
-            with open(self.path, 'w')  as f:
-                json.dump(md_hist, f)
-
-    def remove_referrer(self, referrer_uri, *referrer_md_keys):
-        with LockFile(self.lock_path):
-            md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]['tree_md']
-            if 'referrers' not in last_md:
-                raise ValueError("Cannot remove a referrer that doesn't exist")
-
-            referrers = last_md['referrers']
-
-            if referrer_uri not in referrers:
-                raise ValueError("URI '%s' is not a referrer to %s" %
-                                 (referrer_uri, 'FIXME'))
-
-            for k in referrer_md_keys:
-                referrers[referrer_uri].remove(k)
-
-            if len(referrers[referrer_uri]) == 0:
-                del referrers[referrer_uri]
-
-            last_md['referrers'] = referrers
-            md_hist[-1]['tree_md'] = last_md
-
-            with open(self.path, 'w') as f:
-                json.dump(md_hist, f)
 
 class StorageInterface(object):
     """
@@ -458,7 +182,7 @@ class StorageInterface(object):
         -------
         None
         """
-        missing_md = self.md.get_missing_metadata_fields(md_kwargs)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs, self.required_metadata)
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
@@ -833,7 +557,7 @@ class ModelStorageInterface(StorageInterface):
     def save(self, obj,
              **md_kwargs):
 
-        missing_md = self.md.get_missing_metadata_fields(md_kwargs)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs, self.required_metadata)
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
@@ -968,7 +692,7 @@ class SQLStorageInterface(StorageInterface):
             msg = "SQLStorage expects a datatree SQL object, but got %s"
             raise ValueError(msg % str(type(obj)))
 
-        missing_md = self.md.get_missing_metadata_fields(md_kwargs)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs, self.required_metadata)
 
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
