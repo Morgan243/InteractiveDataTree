@@ -70,20 +70,6 @@ def leaf_to_reference(obj, to_storage_interface=False):
         return obj
 
 
-def reference_to_leaf(tree, obj):
-    if isinstance(obj, basestring) and is_valid_uri(obj):
-        return tree.from_reference(obj)
-    elif isinstance(obj, basestring):
-        return obj
-    else:
-        return obj
-
-def md_resolve(tree, t_md):
-    for k in t_md.keys():
-        t_md[k] = reference_to_leaf(tree, t_md[k])
-    return t_md
-
-
 class StorageInterface(object):
     """
     Base storage interface representing an arbitrary python object
@@ -1094,6 +1080,11 @@ class RepoLeaf(object):
             msg = msg % (storage_type, ",".join(storage_interfaces.keys()))
             raise ValueError(msg)
 
+        if self.storage_type != storage_type:
+            msg = ("You're trying to save a leaf of type '%s', but this leave is '%s'"
+                   %(storage_type, self.storage_type))
+            msg += "\nDelete this leaf first or change to matching storage type"
+
         last_storage_type = self.storage_type
         self.storage_type = storage_type
 
@@ -1290,7 +1281,7 @@ class RepoLeaf(object):
             #l = reference_to_leaf(self.parent_repo, referrer_uri)
             l = self.parent_repo.from_reference(referrer_uri)
             assert isinstance(l, RepoLeaf)
-            l.si.md.remove_reference(previous_si_uri, *keys)
+            l.si.md.remove_reference(previous_si_uri)
             if not delete:
                 l.si.md.add_reference(new_si_uri, *keys)
 
@@ -1666,7 +1657,7 @@ Sub-Repositories
 
         return self
 
-    def delete(self, name, author, storage_type=None):
+    def delete(self, name, author):
         """
         Permanently destroy the object
 
@@ -1856,7 +1847,6 @@ Sub-Repositories
         for l in to_iter:
             yield l.load()
 
-
     def iterleaves(self, progress_bar=True):
         to_iter = sorted(self.__repo_object_table.keys())
         if progress_bar:
@@ -1873,7 +1863,6 @@ Sub-Repositories
         else:
             for k in to_iter:
                 yield self.__repo_object_table[k]
-
 
     def iterrepos(self, progress_bar=True):
         to_iter = sorted(self.__sub_repo_table.keys())

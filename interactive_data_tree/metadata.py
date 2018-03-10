@@ -101,8 +101,20 @@ class Metadata(object):
                 missing.append(rm)
         return missing
 
+    def touch(self):
+        if not self.exists():
+            with LockFile(self.lock_path):
+                f = open(self.path, 'w')
+                f.write('')
+                f.close()
+        return self
+
     def exists(self):
         return os.path.isfile(self.path)
+
+    def remove(self):
+        with LockFile(self.lock_path):
+            os.remove(self.path)
 
     def write_metadata(self, **kwargs):
         """
@@ -127,9 +139,13 @@ class Metadata(object):
 
             # Remove key values that we already have stored (key AND value match)
             for f in md_fields:
-                for k, v in most_recent_md.get(f, dict()).items():
-                    if k in kwargs.get(f, dict()) and v == kwargs[f][k]:
-                        del kwargs[f][k]
+                curr_field_map = most_recent_md.get(f, dict())
+                for field_k, field_v in curr_field_map.items():
+                    got_new_val = field_k in kwargs
+                    val_is_same = field_v == kwargs.get(f, dict()).get(field_k)
+                    if got_new_val and val_is_same:
+
+                        del kwargs[f][field_k]
 
             md.append(kwargs)
             with open(self.path, 'w') as f:
@@ -172,7 +188,7 @@ class Metadata(object):
             with open(self.path, 'w')  as f:
                 json.dump(md_hist, f)
 
-    def remove_reference(self, reference_uri, *reference_md_keys):
+    def remove_reference(self, reference_uri):
         with LockFile(self.lock_path):
             md_hist = self.read_metadata(most_recent=False, lock=False)
             last_md = md_hist[-1]
