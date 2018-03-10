@@ -8,7 +8,6 @@ import unittest
 import tempfile
 import shutil
 import sys
-import collections
 from .context import interactive_data_tree as idt
 
 EXEC_PYTHON3 = sys.version_info > (3, 0)
@@ -119,53 +118,6 @@ class InteractiveDataRepo(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             rt.lvl1.list(list_leaves=False, list_repos=False)
-
-    def test_pandas_storage(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        lvl1 = rt.mkrepo('lvl1')
-        df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
-        lvl1.save(df, 'test_df', storage_type='hdf')
-        ld_df = lvl1.test_df.load()
-        pd.util.testing.assert_frame_equal(df, ld_df)
-
-        lvl1.save(df.a, 'test_series', storage_type='hdf')
-        ld_s = lvl1.test_series.load()
-        pd.util.testing.assert_series_equal(df.a, ld_s)
-
-    def test_pandas_group_hdf(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        lvl1 = rt.mkrepo('lvl1')
-        df_grps = {1999 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
-         2000 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
-         2001 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
-         }
-        lvl1.save(df_grps, 'test_gdf', storage_type='ghdf')
-        pd.util.testing.assert_frame_equal(df_grps[1999],
-                                           lvl1.test_gdf[1999])
-        pd.util.testing.assert_frame_equal(df_grps[2000],
-                                           lvl1.test_gdf[2000])
-        concat_df = pd.concat([df_grps[1999], df_grps[2000]])
-        pd.util.testing.assert_frame_equal(concat_df,
-                                           lvl1.test_gdf[[1999, 2000]])
-
-
-        import numpy as np
-        lvl1.test_gdf[2002] = df_grps[1999] * 3.3
-        pd.util.testing.assert_frame_equal(lvl1.test_gdf[2002],
-                                           df_grps[1999] *3.3)
-
-
-        lvl1.test_gdf['a_series'] = df_grps[2001]['a']
-        pd.util.testing.assert_series_equal(lvl1.test_gdf['a_series'],
-                                            df_grps[2001]['a'])
-
-    def test_pandas_sample(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        df = pd.DataFrame(dict(a=range(100), b=range(100, 200)))
-        lvl1 = rt.mkrepo('lvl1')
-        lvl1.save(df, name='test_df')
-        s_df = lvl1.test_df.hdf.sample(n=5)
-        pd.util.testing.assert_frame_equal(df.head(5), s_df)
 
     def test_attribute_axis_race(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -390,78 +342,6 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.subrepo_a.some_data.delete(author='unittests')
         self.assertTrue(ref not in rt.INDEX())
 
-    def test_model_storage(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        rt.mkrepo('subrepo_a')
-        rt.subrepo_a.save('str object', name='some_data',
-                           comments='something to search for')
-
-        from sklearn.linear_model import LogisticRegression
-        import numpy as np
-
-        X = np.random.rand(100, 10)
-        y = np.random.rand(100).round()
-
-        X_cv = np.random.rand(100, 10)
-        y_cv = np.random.rand(100).round()
-
-        m = LogisticRegression().fit(X, y)
-        features = ['a', 'b', 'c']
-        target = 'z'
-
-        rt.save(m, name='logit_model',
-                input_data=rt.subrepo_a.some_data,
-                features=features,
-                target=target,
-                storage_type='model')
-
-        rt.logit_model.model.predict(X_cv)
-        rt.logit_model.model.predict_proba(X_cv)
-        self.assertEqual(rt.logit_model.features, features)
-        self.assertEqual(rt.logit_model.target, target)
-
-    def test_sql_storage(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        rt.mkrepo('subrepo_a').save('str object', name='some_data',
-                                    comments='something to search for')
-
-        sql_obj = idt.SQL(select_statement='id, name, age',
-                          from_statement='db.table',
-                          where_statement='')
-
-        rt.subrepo_a.save(sql_obj,
-                          name='query_name_and_age')
-
-        with self.assertRaises(ValueError):
-            rt.subrepo_a.query_name_and_age.query(dict())
-
-        query = lambda x: x
-
-        CXN = collections.namedtuple('CXN', 'query')
-        cxn = CXN(query=query)
-        rt.subrepo_a.query_name_and_age.query(cxn)
-
-    def test_sql_parameters(self):
-        rt = idt.RepoTree(repo_root=self.repo_root_path)
-        rt.mkrepo('subrepo_a').save('str object', name='some_data',
-                                    comments='something to search for')
-
-        sql_obj = idt.SQL(select_statement='id, name, age',
-                          from_statement='db.table',
-                          where_statement='age > {age_minimum}',
-                          query_parameters=dict(age_minimum=0))
-
-        rt.subrepo_a.save(sql_obj,
-                          name='query_name_and_age')
-
-        q = sql_obj.build_query()
-        self.assertTrue('age_minimum' not in q)
-        self.assertTrue('age > 0' in q)
-
-        q = sql_obj.build_query(age_minimum=10)
-        self.assertTrue('age_minimum' not in q)
-        self.assertTrue('age > 10' in q)
-
     def test_interface_registration(self):
         # TODO: This test leaves artifacts that may impact other tests
         # as it registers a new interface. Consider wiping before after tests
@@ -547,10 +427,6 @@ class InteractiveDataRepo(unittest.TestCase):
         with self.assertRaises(ValueError):
             rt.lvl1.rmrepo()
 
-    def test_name_conflict(self):
-        # TODO: Make sure that the name doesn't conflict with RepoTree properties
-        pass
-
     def test_iterrepos(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         rt.mkrepo('lvl1a')
@@ -561,7 +437,6 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertIn(rt.lvl1a, repos)
         self.assertIn(rt.lvl1b, repos)
         self.assertIn(rt.lvl1c, repos)
-
 
     def test_iterobjs(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
@@ -615,7 +490,6 @@ class InteractiveDataRepo(unittest.TestCase):
         md2 = rt.lvl1.really_important_string.read_metadata(user_md=False)
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer_renamed)
         self.assertTrue(uri in md2['tree_md']['referrers'] and len(md2['tree_md']['referrers']))
-
 
 
 

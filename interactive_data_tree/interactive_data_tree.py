@@ -83,6 +83,11 @@ class StorageInterface(object):
     required_metadata = []#['author']
 
     def __init__(self, parent_leaf):
+        if not isinstance(parent_leaf, RepoLeaf):
+            msg = "Parameter parent_leaf must be a RepoLeaf"
+            msg += ", but got type '%s'" % str(type(parent_leaf))
+            raise ValueError(msg)
+
         self.parent_leaf = parent_leaf
         self.name = parent_leaf.name
         self.path = parent_leaf.save_path + '.' + self.extension
@@ -234,9 +239,6 @@ class StorageInterface(object):
 
     def md_resolve(self, t_md):
         return md_resolve(self.parent_leaf.parent_repo, t_md=t_md)
-        #for k in t_md.keys():
-        #    t_md[k] = reference_to_leaf(self.parent_leaf.parent_repo, t_md[k])
-        #return t_md
 
     def read_metadata(self, most_recent=True, resolve_references=True,
                       user_md=True):
@@ -684,7 +686,8 @@ class ModelStorageInterface(StorageInterface):
     def save(self, obj,
              **md_kwargs):
 
-        missing_md = self.md.get_missing_metadata_fields(md_kwargs, self.required_metadata)
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs,
+                                                         self.required_metadata)
         if len(missing_md) > 0:
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
@@ -717,6 +720,38 @@ class ModelStorageInterface(StorageInterface):
             _x = X
         preds = self.model.predict_proba(_x)
         return preds
+
+
+class KerasModelStorageInterface(ModelStorageInterface):
+    storage_name = 'keras'
+    extension = 'keras'
+    expose_on_leaf = ModelStorageInterface.expose_on_leaf
+
+    def save(self, obj, **md_kwargs):
+        import keras
+        if not isinstance(obj, keras.Model):
+            msg = "KerasModelStorage expects a keras model"
+            msg += ", instead got type %s" % (str(type(obj)))
+            raise ValueError(msg)
+
+        missing_md = self.md.get_missing_metadata_fields(md_kwargs,
+                                                         self.required_metadata)
+        if len(missing_md) > 0:
+            msg = "Missing required metadata fields: %s"
+            raise ValueError(msg % ", ".join(missing_md))
+
+        with LockFile(self.lock_file):
+            obj.save(self.path, overwrite=True)
+            # TODO: Extract SI metadata infor about the model
+            # e.g. number of layers, types of layers, in/put dims
+            self.write_metadata(obj=obj,
+                                user_md=md_kwargs)
+
+    def load(self, **kwargs):
+        import keras
+        with LockFile(self.lock_file):
+            obj = keras.models.load_model(self.path)
+        return obj
 
 
 class SQL(object):
@@ -935,6 +970,12 @@ register_storage_interface(SQLStorageInterface, 'sql', 3,
                            types=[SQL])
 register_storage_interface(HDFGroupStorageInterface, 'ghdf', 4,
                            types=[pd.core.groupby.DataFrameGroupBy])
+try:
+    import keras
+    register_storage_interface(KerasModelStorageInterface, 'keras', 5,
+                               types=[keras.Model])
+except ImportError:
+    pass
 
 
 class RepoLeaf(object):
