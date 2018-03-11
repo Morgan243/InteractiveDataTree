@@ -932,7 +932,7 @@ def register_storage_interface(interface_class, name,
         raise ValueError("Storage interfaced named '%s' of type %s is not a subclass of %s" % args)
 
     if interface_class.extension in extension_to_interface_name_map:
-        msg = "%s has specified the extension '%s', which is alread in use by %s"
+        msg = "%s has specified the extension '%s', which is already in use by %s"
         raise ValueError(msg % (str(interface_class),
                                 interface_class.extension,
                                 extension_to_interface_name_map[interface_class.extension]))
@@ -959,6 +959,13 @@ def register_storage_interface(interface_class, name,
         if not isinstance(types, list):
             types = [types]
         type_storage_lookup.update({t:name for t in types})
+
+def storage_type_for_obj(obj, default='pickle'):
+    # TODO: Return priority order if multiples match
+    for ty, si_name in type_storage_lookup.items():
+        if isinstance(obj, ty):
+            return si_name
+    return default
 
 
 register_storage_interface(HDFStorageInterface, 'hdf', 0,
@@ -1115,7 +1122,7 @@ class RepoLeaf(object):
         """
         # Need target save type for conflict detection and the eventual save
         if storage_type is None:
-            storage_type = type_storage_lookup.get(type(obj), 'pickle')
+            storage_type = storage_type_for_obj(obj, default='pickle')
         elif storage_type not in storage_interfaces:
             msg = "Unknown storage type '%s', expecting one of %s"
             msg = msg % (storage_type, ",".join(storage_interfaces.keys()))
@@ -1332,7 +1339,7 @@ class RepoLeaf(object):
             # -> Since this leaf is moving, we must update l's referrers
             #l = reference_to_leaf(self.parent_repo, reference_uri)
             l = self.parent_repo.from_reference(reference_uri)
-            l.si.md.remove_referrer(previous_si_uri, *keys)
+            l.si.md.remove_referrer(previous_si_uri)
             if not delete:
                 l.si.md.add_referrer(new_si_uri, *keys)
 

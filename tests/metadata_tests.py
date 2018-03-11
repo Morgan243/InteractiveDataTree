@@ -58,15 +58,55 @@ class MetadataTests(unittest.TestCase):
         self.assertFalse(md.exists(),
                         msg='Metadata should not exist after remove()')
 
-
     def test_basic_write_read(self):
         md = idt.Metadata(path=self.md_path)
         kv = dict(foo=5, bar='thing')
         idt_md = dict(#tree_md=dict(),
                       #si_md=dict(),
                       user_md=kv)
+
+        #with self.assertRaises(ValueError):
+        #    empty_md = md.read_metadata(most_recent=False, lock=True)
+        empty_md = md.read_metadata(most_recent=False, lock=True)
+        self.assertTrue(len(empty_md) == 1)
+
         md.write_metadata(**idt_md)
         last_md = md.read_metadata(most_recent=True, lock=True)
+        self.assertTrue(len(last_md) == 3)
+        self.assertIn('user_md', last_md)
+        self.assertIn('tree_md', last_md)
+
+    def test_basic_references(self):
+        md = idt.Metadata(path=self.md_path)
+        kv = dict(foo=5, bar='thing')
+        idt_md = dict(user_md=kv)
+
+        md.write_metadata(**idt_md)
+        md.add_reference('datatree://foo/bar', 'key1', 'key2')
+        md.write_metadata(**idt_md)
+        md.add_reference('datatree://bar/bar', 'keya', 'keyb')
+        md.write_metadata(user_md=dict(thing=1234, other=98))
+
+        last_md = md.read_metadata(most_recent=True)
+        self.assertTrue(len(last_md['tree_md']['references']) == 2)
+
+
+        ######
+        md.add_referrer('datatree://test/path', 'k1', 'k2', 'k3')
+        md.add_referrer('datatree://path/test', 'c1', 'c2')
+
+        last_md = md.read_metadata(most_recent=True)
+        self.assertTrue(len(last_md['tree_md']['referrers']) == 2)
+
+        #####
+        # Remove
+        md.remove_reference('datatree://bar/bar')
+        last_md = md.read_metadata(most_recent=True)
+        self.assertTrue(len(last_md['tree_md']['references']) == 1)
+
+        md.remove_referrer('datatree://path/test')
+        last_md = md.read_metadata(most_recent=True)
+        self.assertTrue(len(last_md['tree_md']['referrers']) == 1)
 
 
 

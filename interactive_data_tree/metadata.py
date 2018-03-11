@@ -152,8 +152,10 @@ class Metadata(object):
                 json.dump(md, f)
 
     def read_metadata(self, most_recent=True, lock=True):
-        if not os.path.isfile(self.path):
-            md = [dict(tree_md=dict(md_vers=idr_config['md_vers']))]
+        if not self.exists():
+            md = [dict(tree_md=dict(md_vers=idr_config['md_vers']),
+                       user_md=dict(),
+                       si_md=dict())]
         else:
             if lock:
                 with LockFile(self.lock_path):
@@ -163,8 +165,8 @@ class Metadata(object):
                 with open(self.path, 'r') as f:
                     md = json.load(f)
 
-        if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
-            md = metadata_port(md)
+            if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
+                md = metadata_port(md)
 
         if most_recent:
             md = Metadata.__collapse_metadata_deltas(md)
@@ -174,7 +176,7 @@ class Metadata(object):
     def add_reference(self, reference_uri, *reference_md_keys):
         with LockFile(self.lock_path):
             md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]
+            last_md = self.__collapse_metadata_deltas(md_hist)
             references = last_md['tree_md'].get('references', dict())
             keys = references.get(reference_uri, list())
 
@@ -185,13 +187,13 @@ class Metadata(object):
             last_md['tree_md']['references'] = references
             md_hist[-1] = last_md
 
-            with open(self.path, 'w')  as f:
+            with open(self.path, 'w') as f:
                 json.dump(md_hist, f)
 
     def remove_reference(self, reference_uri):
         with LockFile(self.lock_path):
             md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]
+            last_md = self.__collapse_metadata_deltas(md_hist)
             references = last_md['tree_md'].get('references', dict())
 
             if reference_uri not in references:
@@ -212,7 +214,7 @@ class Metadata(object):
     def add_referrer(self, referrer_uri, *referrer_md_keys):
         with LockFile(self.lock_path):
             md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]
+            last_md = self.__collapse_metadata_deltas(md_hist)
 
             # Referrers maps a leaf URI to keys in the metadata
             referrers = last_md['tree_md'].get('referrers', dict())
@@ -230,27 +232,30 @@ class Metadata(object):
             with open(self.path, 'w')  as f:
                 json.dump(md_hist, f)
 
-    def remove_referrer(self, referrer_uri, *referrer_md_keys):
+    def remove_referrer(self, referrer_uri):
         with LockFile(self.lock_path):
             md_hist = self.read_metadata(most_recent=False, lock=False)
-            last_md = md_hist[-1]['tree_md']
-            if 'referrers' not in last_md:
+            last_md = self.__collapse_metadata_deltas(md_hist)
+
+            if 'referrers' not in last_md['tree_md']:
                 raise ValueError("Cannot remove a referrer that doesn't exist")
 
-            referrers = last_md['referrers']
+            referrers = last_md['tree_md']['referrers']
 
             if referrer_uri not in referrers:
                 raise ValueError("URI '%s' is not a referrer to %s" %
                                  (referrer_uri, 'FIXME'))
 
-            for k in referrer_md_keys:
-                referrers[referrer_uri].remove(k)
+            del referrers[referrer_uri]
 
-            if len(referrers[referrer_uri]) == 0:
-                del referrers[referrer_uri]
+            #for k in referrer_md_keys:
+            #    referrers[referrer_uri].remove(k)
 
-            last_md['referrers'] = referrers
-            md_hist[-1]['tree_md'] = last_md
+            #if len(referrers[referrer_uri]) == 0:
+            #    del referrers[referrer_uri]
+
+            last_md['tree_md']['referrers'] = referrers
+            md_hist[-1] = last_md
 
             with open(self.path, 'w') as f:
                 json.dump(md_hist, f)

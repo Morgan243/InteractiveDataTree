@@ -133,7 +133,8 @@ class StorageInterfaceTests(unittest.TestCase):
         rt.save(model, name='keras_model', author='unittest',
                 input_data=rt.subrepo_a.some_data,
                 features=['a', 'b'],
-                target='not_real', storage_type='keras')
+                target='not_real')
+        self.assertTrue(rt.keras_model.storage_type == 'keras')
 
         tm = rt.keras_model.load()
 
