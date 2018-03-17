@@ -4,7 +4,7 @@ python:
   - "3.6"
 install:
   - python setup.py install
-  - pip install nose coveralls sklearn scipy numpy pygments keras
+  - pip install nose coveralls sklearn scipy numpy pygments keras np_utils
 script:
-  - cd tests; nosetests --with-coverage --cover-package=interactive_data_tree
+  - nosetests --with-coverage --cover-package=interactive_data_tree
 after_success: coveralls
