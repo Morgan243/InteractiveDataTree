@@ -90,7 +90,6 @@ class MetadataTests(unittest.TestCase):
         last_md = md.read_metadata(most_recent=True)
         self.assertTrue(len(last_md['tree_md']['references']) == 2)
 
-
         ######
         md.add_referrer('datatree://test/path', 'k1', 'k2', 'k3')
         md.add_referrer('datatree://path/test', 'c1', 'c2')
@@ -107,6 +106,17 @@ class MetadataTests(unittest.TestCase):
         md.remove_referrer('datatree://path/test')
         last_md = md.read_metadata(most_recent=True)
         self.assertTrue(len(last_md['tree_md']['referrers']) == 1)
+
+
+        md.add_referrer('datatree://bar1/bar2', 'key1a', 'key1b')
+        md.add_referrer('datatree://bar2/bar1', 'key2a', 'key2b')
+
+        md.add_reference('datatree://bar1_/bar2', 'key1a', 'key1b')
+        md.add_reference('datatree://bar2_/bar1', 'key2a', 'key2b')
+
+        last_md = md.read_metadata(most_recent=True)
+        self.assertTrue(len(last_md['tree_md']['referrers']) == 3)
+        self.assertTrue(len(last_md['tree_md']['references']) == 3)
 
 
 
