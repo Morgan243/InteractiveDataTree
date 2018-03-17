@@ -727,11 +727,11 @@ class KerasModelStorageInterface(ModelStorageInterface):
     extension = 'keras'
     expose_on_leaf = ModelStorageInterface.expose_on_leaf
 
-    def save(self, obj, **md_kwargs):
+    def save(self, model, **md_kwargs):
         import keras
-        if not isinstance(obj, keras.Model):
+        if not isinstance(model, keras.Model):
             msg = "KerasModelStorage expects a keras model"
-            msg += ", instead got type %s" % (str(type(obj)))
+            msg += ", instead got type %s" % (str(type(model)))
             raise ValueError(msg)
 
         missing_md = self.md.get_missing_metadata_fields(md_kwargs,
@@ -741,10 +741,10 @@ class KerasModelStorageInterface(ModelStorageInterface):
             raise ValueError(msg % ", ".join(missing_md))
 
         with LockFile(self.lock_file):
-            obj.save(self.path, overwrite=True)
+            model.save(self.path, overwrite=True)
             # TODO: Extract SI metadata infor about the model
             # e.g. number of layers, types of layers, in/put dims
-            self.write_metadata(obj=obj,
+            self.write_metadata(obj=model,
                                 user_md=md_kwargs)
 
     def load(self, **kwargs):
