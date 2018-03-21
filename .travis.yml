@@ -5,7 +5,7 @@ python:
 install:
   - python setup.py install
   - pip install nose coveralls sklearn scipy numpy
-  - pip install tensorflow tables
+  - pip install tensorflow tables h5py
   - pip install pygments keras future
 script:
   - nosetests --with-coverage --cover-package=interactive_data_tree
