@@ -5,8 +5,8 @@ python:
 install:
   - python setup.py install
   - pip install nose coveralls sklearn scipy numpy
-  - pip install theano
-  - pip install pygments keras np_utils future
+  - pip install tensorflow
+  - pip install pygments keras future
 script:
   - nosetests --with-coverage --cover-package=interactive_data_tree
 after_success: coveralls
