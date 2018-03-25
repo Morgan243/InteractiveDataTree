@@ -156,7 +156,7 @@ class StorageInterface(object):
 
         with LockFile(self.lock_file):
             with open(self.path, mode='wb') as f:
-                pickle.dump(obj, f)
+                pickle.dump(obj, f, protocol=2)
 
             self.write_metadata(obj=obj, user_md=md_kwargs)
 

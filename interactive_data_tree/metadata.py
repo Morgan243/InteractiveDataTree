@@ -17,6 +17,7 @@ standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
 ############################
 class Metadata(object):
+    metadata_port = lambda x: x
     def __init__(self, path, lock_path=None, required_fields=None,
                  resolve_tree=None):
         self.path = path
@@ -142,8 +143,9 @@ class Metadata(object):
                 with open(self.path, 'r') as f:
                     md = json.load(f)
 
-            if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
-                md = metadata_port(md)
+            #if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
+            #    md = metadata_port(md)
+            md = Metadata.metadata_port(md)
 
         if most_recent:
             md = Metadata.__collapse_metadata_deltas(md)
