@@ -13,7 +13,7 @@ from datetime import datetime
 from glob import glob
 import sys
 
-from .metadata import Metadata, metadata_port, standard_metadata
+from .metadata import Metadata, standard_metadata
 from .lockfile import LockFile
 from .conf import *
 from .utils import *

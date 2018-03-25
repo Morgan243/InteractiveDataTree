@@ -50,6 +50,8 @@ class InteractiveDataRepo(unittest.TestCase):
         rep_tree.save(t_obj, 'test_string')
 
         s = str(rep_tree.test_string.pickle)
+        s = str(rep_tree.test_string)
+        s = str(rep_tree)
 
         self.assertTrue(hasattr(rep_tree, 'test_string'))
         repos, objs = rep_tree.list()
@@ -66,6 +68,19 @@ class InteractiveDataRepo(unittest.TestCase):
         lvs = rep_tree.list_leaves()
         self.assertEqual(len(rps),  1)
         self.assertEqual(len(lvs),  3)
+
+        lvs = list(rep_tree.iterleaves(progress_bar=False))
+        objs = list(rep_tree.iterobjs(progress_bar=False))
+        rps = list(rep_tree.iterrepos(progress_bar=False))
+        self.assertEqual(len(rps),  1)
+        self.assertEqual(len(objs),  3)
+        self.assertEqual(len(lvs),  3)
+
+        with self.assertRaises(NotImplementedError):
+            rep_tree.test_string['foo']
+
+        with self.assertRaises(NotImplementedError):
+            rep_tree.test_string['foo'] = 10
 
         # Test aborting the operation ('n') - check it didn't do through after
         with mock.patch(builtins_input_mock_str, return_value='n'):

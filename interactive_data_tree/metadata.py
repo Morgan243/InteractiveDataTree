@@ -10,34 +10,11 @@ import time
 from datetime import datetime
 from glob import glob
 from ast import parse
-import sys
-from .conf import *
 from .lockfile import LockFile
 from .utils import *
 
-def metadata_port(md_hist):
-    new_md_hist = list()
-    for md in md_hist:
-        user_md = {k:md[k] for k in md.get('extra_metadata_args', dict())}
-
-        tree_md = {k:md[k] for k in ['obj_type', 'write_time', 'extra_metadata_args',
-                                     'references', 'referrers', 'md_update_time']
-                  if k in md}
-        si_md = {k:md[k] for k in ['columns', 'dtypes', 'index_head', 'length']
-                 if k in md}
-        si_md = None if all(v is None for v in si_md.values()) else si_md
-
-        new_md = dict(user_md=user_md,
-                      tree_md=tree_md,
-                      si_md=si_md)
-        new_md_hist.append(new_md)
-    return new_md_hist
-
-
-
 standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
-
 ############################
 class Metadata(object):
     def __init__(self, path, lock_path=None, required_fields=None,
