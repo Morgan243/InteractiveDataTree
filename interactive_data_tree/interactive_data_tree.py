@@ -1024,17 +1024,26 @@ class RepoLeaf(object):
         return self.load()
 
     def __getitem__(self, item):
-        return self.si[item]
+        if hasattr(self.si, '__getitem__'):
+            return self.si[item]
+        else:
+            msg = "Storage interface '%s' has setitem implementation" % self.storage_type
+            raise NotImplementedError(msg)
 
     def __setitem__(self, key, value):
-        self.si[key] = value
+        if hasattr(self.si, '__setitem__'):
+            self.si[key] = value
+        else:
+            msg = "Storage interface '%s' has setitem implementation" % self.storage_type
+            raise NotImplementedError(msg)
 
     def __str__(self):
         return self.reference()
 
     def __update_doc_str(self):
         docs = self.name + "\n\n"
-        si = self._get_highest_priority_si()
+        #si = self._get_highest_priority_si()
+        si = self.si
 
         if si is None:
             return
@@ -1093,6 +1102,7 @@ class RepoLeaf(object):
             msg = "to many files: %s" % "\n".join(fnames)
             raise ValueError(msg)
 
+        self.__update_doc_str()
         return self
 
     def save(self, obj, storage_type=None, auto_overwrite=False,

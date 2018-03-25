@@ -61,6 +61,12 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertEqual(t_obj, rep_tree.test_string.load(storage_type=None))
         self.assertEqual(t_obj, rep_tree.test_string())
 
+        rep_tree.mkrepo('subdir')
+        rps = rep_tree.list_repos()
+        lvs = rep_tree.list_leaves()
+        self.assertEqual(len(rps),  1)
+        self.assertEqual(len(lvs),  3)
+
         # Test aborting the operation ('n') - check it didn't do through after
         with mock.patch(builtins_input_mock_str, return_value='n'):
             n_t_obj = 'another string'
@@ -491,6 +497,10 @@ class InteractiveDataRepo(unittest.TestCase):
         uri = idt.leaf_to_reference(rt.lvl1.test_referrer_renamed)
         self.assertTrue(uri in md2['tree_md']['referrers'] and len(md2['tree_md']['referrers']))
 
+    def test_str_repr_and_doc_str(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        rt.mkrepo('lvl1')
+        repr = str(rt.lvl1)
 
 
 # TODO:
