@@ -17,7 +17,7 @@ standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
 ############################
 class Metadata(object):
-    metadata_port = lambda x: x
+    metadata_port = None
     def __init__(self, path, lock_path=None, required_fields=None,
                  resolve_tree=None):
         self.path = path
@@ -145,7 +145,8 @@ class Metadata(object):
 
             #if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
             #    md = metadata_port(md)
-            md = Metadata.metadata_port(md)
+            if Metadata.metadata_port is not None and callable(Metadata.metadata_port):
+                md = Metadata.metadata_port(md)
 
         if most_recent:
             md = Metadata.__collapse_metadata_deltas(md)
