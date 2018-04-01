@@ -129,11 +129,25 @@ class Metadata(object):
             with open(self.path, 'w') as f:
                 json.dump(md, f)
 
+    @staticmethod
+    def make_base_metadata(user_md=None, si_md=None):
+        md = [dict(tree_md=dict(md_vers=idr_config['md_vers']),
+                   user_md=dict() if user_md is None else user_md,
+                   si_md=dict() if si_md is None else si_md)]
+        return md
+
+    @staticmethod
+    def t_port(md):
+        try:
+            t_md = Metadata.__collapse_metadata_deltas(md)
+            return md
+        except:
+            return Metadata.make_base_metadata()
+
     def read_metadata(self, most_recent=True, lock=True):
+        port_available = Metadata.metadata_port is not None and callable(Metadata.metadata_port)
         if not self.exists():
-            md = [dict(tree_md=dict(md_vers=idr_config['md_vers']),
-                       user_md=dict(),
-                       si_md=dict())]
+            md = self.make_base_metadata()
         else:
             if lock:
                 with LockFile(self.lock_path):
@@ -143,13 +157,18 @@ class Metadata(object):
                 with open(self.path, 'r') as f:
                     md = json.load(f)
 
-            #if md[0].get('tree_md', dict()).get('md_vers', dict()) != idr_config['md_vers']:
-            #    md = metadata_port(md)
-            if Metadata.metadata_port is not None and callable(Metadata.metadata_port):
+            if port_available:
                 md = Metadata.metadata_port(md)
 
         if most_recent:
-            md = Metadata.__collapse_metadata_deltas(md)
+            try:
+                md = Metadata.__collapse_metadata_deltas(md)
+            except:
+                if port_available:
+                    md = Metadata.metadata_port(md)
+                    md = Metadata.__collapse_metadata_deltas(md)
+                else:
+                    raise
 
         return md
 
@@ -239,3 +258,6 @@ class Metadata(object):
 
             with open(self.path, 'w') as f:
                 json.dump(md_hist, f)
+
+
+Metadata.metadata_port = Metadata.t_port

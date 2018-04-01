@@ -2028,3 +2028,15 @@ Sub-Repositories
 
         print("---Objects---")
         print("\n".join(objs))
+
+
+#def reinit_metadata()
+
+## ReInit-metadata option
+## PARAMS: reinit_md, md_port=func
+## - Set Metadata.metadata_port = md_port
+##      - Default port should try to extract user_md in a few ways
+##        but returns a new MD
+## - Load all metadata into a map of uri to the md
+##
+## - Save this dict in root and
