@@ -17,7 +17,6 @@ standard_metadata = ['author', 'comments', 'tags',
                      'write_time', 'obj_type']
 ############################
 class Metadata(object):
-    metadata_port = None
     def __init__(self, path, lock_path=None, required_fields=None,
                  resolve_tree=None):
         self.path = path
@@ -137,7 +136,7 @@ class Metadata(object):
         return md
 
     @staticmethod
-    def t_port(md):
+    def metadata_port(md):
         try:
             t_md = Metadata.__collapse_metadata_deltas(md)
             return md
@@ -259,5 +258,3 @@ class Metadata(object):
             with open(self.path, 'w') as f:
                 json.dump(md_hist, f)
 
-
-Metadata.metadata_port = Metadata.t_port
