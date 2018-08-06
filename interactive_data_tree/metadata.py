@@ -150,11 +150,19 @@ class Metadata(object):
         else:
             if lock:
                 with LockFile(self.lock_path):
+                    try:
+                        with open(self.path, 'r') as f:
+                            md = json.load(f)
+                    except:
+                        print("Exception trying to load: %s" % self.path)
+                        raise
+            else:
+                try:
                     with open(self.path, 'r') as f:
                         md = json.load(f)
-            else:
-                with open(self.path, 'r') as f:
-                    md = json.load(f)
+                except:
+                    print("Exception trying to load: %s" % self.path)
+                    raise
 
             if port_available:
                 md = Metadata.metadata_port(md)

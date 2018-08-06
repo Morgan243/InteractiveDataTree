@@ -517,6 +517,8 @@ class InteractiveDataRepo(unittest.TestCase):
         rt.mkrepo('lvl1')
         repr = str(rt.lvl1)
 
+    def test_remote_repo(self):
+        t_rt = idt.RepoTree('/export/datasets/idt')
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)

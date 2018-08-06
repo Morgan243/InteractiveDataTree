@@ -668,6 +668,18 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         html_str += div_template
         return html_str
 
+
+class NumpyStorageInterface(StorageInterface):
+    storage_name = 'numpy'
+    extension = 'npy'
+    @staticmethod
+    def __valid_object_for_storage(obj):
+        import numpy as np
+        return isinstance(obj, np.ndarray)
+
+    def save(self):
+        pass
+
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
     extension = 'mdl'
@@ -980,7 +992,7 @@ register_storage_interface(HDFGroupStorageInterface, 'ghdf', 4,
 try:
     import keras
     register_storage_interface(KerasModelStorageInterface, 'keras', 5,
-                               types=[keras.Model])
+                               types=[keras.Model, keras.Sequential])
 except ImportError:
     pass
 
@@ -993,7 +1005,8 @@ class RepoLeaf(object):
     # ABC used in order to allow doc string monkey patching
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, parent_repo, name):
+    def __init__(self, parent_repo, name, fnames=None,
+                 update_doc_strings=False):
         """
         Parameters
         ----------
@@ -1009,7 +1022,8 @@ class RepoLeaf(object):
         self.type_to_storage_interface_map = dict()
         self.si = None
         self.storage_type = None
-        self.refresh()
+        self.update_doc_strings = update_doc_strings
+        self.refresh(fnames=fnames)
 
     def __call__(self, *args, **kwargs):
         """
@@ -1076,13 +1090,14 @@ class RepoLeaf(object):
         ref_str = URI_SPEC + ref_str
         return ref_str
 
-    def refresh(self):
+    def refresh(self, fnames=None):
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
 
-        fnames = [p for p in glob(self.save_path + '.*')
-                        if p[-len(mde):] != mde
-                        and p[-len(repe):] != repe]
+        if fnames is None:
+            fnames = [p for p in glob(self.save_path + '.*')
+                            if p[-len(mde):] != mde
+                            and p[-len(repe):] != repe]
 
         if len(fnames) == 1:
             if self.si is None:
@@ -1102,7 +1117,8 @@ class RepoLeaf(object):
             msg = "to many files: %s" % "\n".join(fnames)
             raise ValueError(msg)
 
-        self.__update_doc_str()
+        if self.update_doc_strings:
+            self.__update_doc_str()
         return self
 
     def save(self, obj, storage_type=None, auto_overwrite=False,
@@ -1673,7 +1689,7 @@ Sub-Repositories
 
         return list(reversed(repos))
 
-    def refresh(self):
+    def refresh(self, all_dir_items=None):
         """
         Force the tree to rebuild by rescanning the filesystem
 
@@ -1681,32 +1697,55 @@ Sub-Repositories
         -------
         self
         """
+        mde = idr_config['metadata_extension']
+        repe = idr_config['repo_extension']
         repo_curr = dict(self.__sub_repo_table)
         obj_curr = dict(self.__repo_object_table)
         self.__sub_repo_table = dict()
         self.__repo_object_table = dict()
 
-        all_dir_items = os.listdir(self.idr_prop['repo_root'])
+        if all_dir_items is None:
+            all_dir_items = os.listdir(self.idr_prop['repo_root'])
+
         matching_items = [f for f in all_dir_items
-                          if '.' in f
-                          and f[-len(idr_config['metadata_extension']):] != idr_config['metadata_extension']]
+                          if ('.' in f) and f[-len(mde):] != mde]
+        repo_items = [f for f in matching_items
+                          if f[-len(repe):] == repe]
+        obj_items = [f for f in matching_items
+                      if f[-len(repe):] != repe]
 
-        for f in matching_items:
-            base_name, ext = f.split('.')
-            is_file = os.path.isfile(os.path.join(self.idr_prop['repo_root'], f))
-            if is_file:
-                # Had the object before - don't create new Leaf
-                if base_name in obj_curr:
-                    self.add_obj_leaf(obj_curr[base_name].refresh())
-                else:
-                    self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name))
+        for rf in repo_items:
+            r = rf.split('.')
+            if len(r) == 2:
+                base_name, ext = r
             else:
-                if base_name in repo_curr:
-                    self.add_repo_tree(repo_curr[base_name].refresh())
-                else:
-                    p = os.path.join(self.idr_prop['repo_root'], f)
-                    self.add_repo_tree(RepoTree(repo_root=p, parent_repo=self))
+                msg = "-"*30
+                msg += "\nToo many files found in %s" % self.idr_prop['repo_root']
+                msg += "\n%s\n" % r
+                raise ValueError(msg)
 
+            if base_name in repo_curr:
+                self.add_repo_tree(repo_curr[base_name].refresh())
+            else:
+                p = os.path.join(self.idr_prop['repo_root'], rf)
+                self.add_repo_tree(RepoTree(repo_root=p, parent_repo=self))
+
+        for of in obj_items:
+            r = of.split('.')
+            if len(r) == 2:
+                base_name, ext = r
+            else:
+                msg = "-"*30
+                msg += "\nToo many files found in %s" % self.idr_prop['repo_root']
+                msg += "\n%s\n" % r
+                raise ValueError(msg)
+
+            obj_files = list(filter(lambda s: (base_name == s.split('.')[0]), obj_items))
+            # Had the object before - don't create new Leaf
+            if base_name in obj_curr:
+                self.add_obj_leaf(obj_curr[base_name].refresh(fnames=obj_files))
+            else:
+                self.add_obj_leaf(RepoLeaf(parent_repo=self, name=base_name, fnames=obj_files))
 
         curr_names = set(list(obj_curr.keys()) + list(repo_curr.keys()))
         new_names = set(list(self.__repo_object_table.keys()) + list(self.__sub_repo_table.keys()))
@@ -1818,14 +1857,11 @@ Sub-Repositories
         if tags is not None:
             extra_kwargs['tags'] = tags
 
-        leaf = self.__repo_object_table.get(name, RepoLeaf(parent_repo=self, name=name))
+        leaf = self.__repo_object_table.get(name,
+                                            RepoLeaf(parent_repo=self, name=name))
         leaf.save(obj, storage_type=storage_type,
                   auto_overwrite=auto_overwrite,
                   **extra_kwargs)
-        #leaf.save(obj, storage_type=storage_type, author=author,
-        #          auto_overwrite=auto_overwrite, comments=comments, tags=tags,
-        #          **extra_kwargs)
-
         self.add_obj_leaf(leaf)
 
     def load(self, name, **kwargs):
