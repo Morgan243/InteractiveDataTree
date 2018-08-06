@@ -13,6 +13,7 @@ from .context import interactive_data_tree as idt
 EXEC_PYTHON3 = sys.version_info > (3, 0)
 # Patching the builtin directly doesn't seem to always work in Python 2
 builtins_input_mock_str = 'interactive_data_tree.interactive_data_tree.prompt_input'
+remote_dir = '/export/datasets/idt'
 
 class InteractiveDataRepo(unittest.TestCase):
     @staticmethod
@@ -518,7 +519,8 @@ class InteractiveDataRepo(unittest.TestCase):
         repr = str(rt.lvl1)
 
     def test_remote_repo(self):
-        t_rt = idt.RepoTree('/export/datasets/idt')
+        if os.path.exists(remote_dir):
+            t_rt = idt.RepoTree(remote_dir)
 
 # TODO:
 # - Handle wrong types and check types within reason (e.g. strings!)
