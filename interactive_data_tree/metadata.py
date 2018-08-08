@@ -80,7 +80,7 @@ class Metadata(object):
 
     def touch(self):
         if not self.exists():
-            with LockFile(self.lock_path):
+            with LockFile(self.lock_path, lock_type='wlock'):
                 f = open(self.path, 'w')
                 f.write('')
                 f.close()
@@ -90,7 +90,7 @@ class Metadata(object):
         return os.path.isfile(self.path)
 
     def remove(self):
-        with LockFile(self.lock_path):
+        with LockFile(self.lock_path, lock_type='wlock'):
             os.remove(self.path)
 
     def write_metadata(self, **kwargs):
@@ -110,7 +110,7 @@ class Metadata(object):
         None
         """
 
-        with LockFile(self.lock_path):
+        with LockFile(self.lock_path, lock_type='wlock'):
             md = self.read_metadata(most_recent=False, lock=False)
             most_recent_md = Metadata.__collapse_metadata_deltas(md)
 
@@ -149,7 +149,7 @@ class Metadata(object):
             md = self.make_base_metadata()
         else:
             if lock:
-                with LockFile(self.lock_path):
+                with LockFile(self.lock_path, lock_type='rlock'):
                     try:
                         with open(self.path, 'r') as f:
                             md = json.load(f)
@@ -180,7 +180,7 @@ class Metadata(object):
         return md
 
     def add_reference(self, reference_uri, *reference_md_keys):
-        with LockFile(self.lock_path):
+        with LockFile(self.lock_path, lock_type='wlock'):
             md_hist = self.read_metadata(most_recent=False, lock=False)
             last_md = self.__collapse_metadata_deltas(md_hist)
             references = last_md['tree_md'].get('references', dict())
@@ -197,7 +197,7 @@ class Metadata(object):
                 json.dump(md_hist, f)
 
     def remove_reference(self, reference_uri):
-        with LockFile(self.lock_path):
+        with LockFile(self.lock_path, lock_type='wlock'):
             md_hist = self.read_metadata(most_recent=False, lock=False)
             last_md = self.__collapse_metadata_deltas(md_hist)
             references = last_md['tree_md'].get('references', dict())
@@ -218,7 +218,7 @@ class Metadata(object):
                 json.dump(md_hist, f)
 
     def add_referrer(self, referrer_uri, *referrer_md_keys):
-        with LockFile(self.lock_path):
+        with LockFile(self.lock_path, lock_type='wlock'):
             md_hist = self.read_metadata(most_recent=False, lock=False)
             last_md = self.__collapse_metadata_deltas(md_hist)
 
@@ -239,7 +239,7 @@ class Metadata(object):
                 json.dump(md_hist, f)
 
     def remove_referrer(self, referrer_uri):
-        with LockFile(self.lock_path):
+        with LockFile(self.lock_path, lock_type='wlock'):
             md_hist = self.read_metadata(most_recent=False, lock=False)
             last_md = self.__collapse_metadata_deltas(md_hist)
 

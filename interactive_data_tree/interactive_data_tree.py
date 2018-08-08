@@ -130,7 +130,7 @@ class StorageInterface(object):
         -------
         Object stored
         """
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='rlock'):
             with open(self.path, mode='rb') as f:
                 obj = pickle.load(f)
             return obj
@@ -154,7 +154,7 @@ class StorageInterface(object):
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='wlock'):
             with open(self.path, mode='wb') as f:
                 pickle.dump(obj, f, protocol=2)
 
@@ -370,7 +370,7 @@ class HDFStorageInterface(StorageInterface):
         -------
         Object stored
         """
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='rlock'):
             obj = pd.read_hdf(self.path, mode='r')
         return obj
 
@@ -391,7 +391,7 @@ class HDFStorageInterface(StorageInterface):
         if not self.__valid_object_for_storage(obj):
             raise ValueError("Expected Pandas Data object, got %s" % type(obj))
 
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='wlock'):
             hdf_store = pd.HDFStore(self.path, mode='w')
             hdf_store.put(HDFStorageInterface.hdf_data_level,
                           obj, format=HDFStorageInterface.hdf_format)
@@ -417,7 +417,7 @@ class HDFStorageInterface(StorageInterface):
         -------
         Pandas data object of the first n entries
         """
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='rlock'):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
@@ -511,7 +511,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         self.update(**kargs)
 
     def load(self, group=None, concat=True):
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='rlock'):
             hdf_store = pd.HDFStore(self.path, mode='r')
             hdf_keys = hdf_store.keys()
             prefix = HDFGroupStorageInterface.hdf_data_level + '/'
@@ -558,7 +558,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         else:
             d_obj_iter = {gk: obj.get_group(gk) for gk in obj.groups.keys()}
 
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='wlock'):
             hdf_store = pd.HDFStore(self.path, mode='a')
             try:
                 from tqdm import tqdm
@@ -585,7 +585,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
             raise ValueError(msg)
 
         d_grps = dict(grps)
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='wlock'):
             hdf_store = pd.HDFStore(self.path, mode='a')
             for k, v in d_grps.items():
                 hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
@@ -752,7 +752,7 @@ class KerasModelStorageInterface(ModelStorageInterface):
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='wlock'):
             model.save(self.path, overwrite=True)
             # TODO: Extract SI metadata infor about the model
             # e.g. number of layers, types of layers, in/put dims
@@ -761,7 +761,7 @@ class KerasModelStorageInterface(ModelStorageInterface):
 
     def load(self, **kwargs):
         import keras
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='rlock'):
             obj = keras.models.load_model(self.path)
         return obj
 
@@ -852,7 +852,7 @@ class SQLStorageInterface(StorageInterface):
     required_metadata = []
 
     def load(self):
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='rlock'):
             with open(self.path, mode='r') as f:
                 obj = json.load(f)
         sql_obj = SQL(**obj)
@@ -873,7 +873,7 @@ class SQLStorageInterface(StorageInterface):
             raise ValueError(msg % ", ".join(missing_md))
 
         store_dict = dict(obj.asdict())
-        with LockFile(self.lock_file):
+        with LockFile(self.lock_file, lock_type='wlock'):
             with open(self.path, mode='w') as f:
                 json.dump(store_dict, f)
 
@@ -1204,7 +1204,8 @@ class RepoLeaf(object):
         self.parent_repo._append_to_master_log(operation='save', leaf=self,
                                                author=md_props.get('author', None))
 
-        self.parent_repo._add_to_index(leaf=self)
+        #self.parent_repo._add_to_index(leaf=self)
+        self.parent_repo.write_hooks(self)
 
         self.refresh()
 
@@ -1228,7 +1229,8 @@ class RepoLeaf(object):
 
         self.parent_repo._append_to_master_log(operation='delete', leaf=self,
                                                author=author)
-        self.parent_repo._remove_from_index(self, missing_err='ignore')
+        #self.parent_repo._remove_from_index(self, missing_err='ignore')
+        self.parent_repo.delete_hooks(self)
         self.parent_repo.refresh()
 
     def rename(self, new_name, author):
@@ -1249,27 +1251,27 @@ class RepoLeaf(object):
         # Remove all files using associated lock files
         for f, l_f in files_and_locks:
             # Will break if lock file is not valid...
-            with LockFile(l_f):
+            with LockFile(l_f, lock_type='wlock'):
                 fname = os.path.split(f)[-1]
                 new_fname = fname.replace(orig_name, new_name)
                 new_p = os.path.join(base_p, new_fname)
                 shutil.move(f, new_p)
 
-        try:
-            # Remove storage type from the index
-            self.parent_repo._remove_from_index(self)
-        except ValueError as e:
-            ref = self.reference()
-            message_user("Unable to remove '%s' from index" % ref )
-
-        self.parent_repo.refresh()
-
-        self.parent_repo._append_to_master_log(operation='rename', leaf=self,
+        self.parent_repo._append_to_master_log(operation='rename',
+                                               leaf=self,
                                                author=author)
 
-        self.parent_repo._add_to_index(self)
+        try:
+            # Remove storage type from the index
+            self.parent_repo.delete_hooks(self)
+        except ValueError as e:
+            ref = self.reference()
+            message_user("Unable to execute hooks on leaf: '%s'" % ref)
 
+        self.parent_repo.write_hooks(self)
+        self.parent_repo.refresh()
         self.parent_repo[new_name].update_references(orig_si_ref)
+
 
     def move(self, tree, author):
         """
@@ -1304,20 +1306,21 @@ class RepoLeaf(object):
         # Remove all files using associated lock files
         for f, l_f in files_and_locks:
             # Will break if lock file is not valid...
-            with LockFile(l_f):
+            with LockFile(l_f, lock_type='wlock'):
                 fname = os.path.split(f)[-1]
                 new_p = os.path.join(new_base_p, fname)
                 shutil.move(f, new_p)
 
         # Remove storage type from the index
-        self.parent_repo._remove_from_index(self)
+        self.parent_repo.delete_hooks(self)
         self.parent_repo.refresh()
         tree.refresh()
         self.parent_repo._append_to_master_log(operation='move', leaf=self,
                                                author=author,
                                                storage_type=self.si.storage_name)
 
-        self.parent_repo._add_to_index(tree[self.name])
+        #self.parent_repo._add_to_index(tree[self.name])
+        self.parent_repo.write_hooks(tree[self.name])
 
 
         tree[self.name].update_references(orig_si_ref)
@@ -1404,6 +1407,13 @@ class RepoTree(object):
         self.name = self.idr_prop['repo_name']
         self.__repo_object_table = dict()
         self.__sub_repo_table = dict()
+
+        index_f = lambda lf: self._add_to_index(lf)
+        self.__write_hooks = dict(index=index_f)
+
+        del_index_f = lambda lf: self._remove_from_index(lf)
+        self.__delete_hooks = dict(index=del_index_f)
+
         self.refresh()
 
     def __contains__(self, item):
@@ -1622,6 +1632,14 @@ Sub-Repositories
         ref = leaf.reference()
         master_index[ref] = vec_map
         self._write_master_index(master_index)
+
+    def write_hooks(self, leaf):
+        for h_name, h in self.__write_hooks.items():
+            h(leaf)
+
+    def delete_hooks(self, leaf):
+        for h_name, h in self.__delete_hooks.items():
+            h(leaf)
 
     def search(self, q_str, top_n=5, interactive=True):
         # TODO: add in filters

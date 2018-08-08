@@ -29,7 +29,9 @@ class LockFile(object):
     A context object (use in 'with' statement) that attempts to create
     a lock file on entry, with blocking/retrying until successful
     """
-    def __init__(self, path, poll_interval=1,
+    lock_types = ('lock', 'rlock', 'wlock')
+    def __init__(self, path, lock_type='lock',
+                 poll_interval=1,
                  wait_msg=None):
         """
         Parameters
@@ -44,6 +46,12 @@ class LockFile(object):
         self.poll_interval = poll_interval
         self.wait_msg = wait_msg
         self.locked = False
+
+        if lock_type not in LockFile.lock_types:
+            raise ValueError("Unknown lock type: %s\nExpected one of %s"
+                             % (str(lock_type), ", ".join(LockFile.lock_types)))
+
+        self.lock_type = lock_type
 
         # Make sure the directory exists
         dirs = os.path.split(path)[:-1]
