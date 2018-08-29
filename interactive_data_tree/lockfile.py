@@ -29,10 +29,10 @@ class LockFile(object):
     A context object (use in 'with' statement) that attempts to create
     a lock file on entry, with blocking/retrying until successful
     """
-    lock_types = ('lock', 'rlock', 'wlock')
+    lock_types = ('rlock', 'wlock')
     def __init__(self, path, lock_type='lock',
                  poll_interval=1,
-                 wait_msg=None):
+                 wait_msg=True):
         """
         Parameters
         ----------
@@ -81,8 +81,9 @@ class LockFile(object):
                 break
             except fs_except as e:
                 block_count += 1
-                if self.wait_msg is not None:
-                    print("[%d] %s" % (block_count, self.wait_msg))
+                #if self.wait_msg is not None:
+                if self.wait_msg:
+                    print("[%d] Blocking on %s" % (block_count, self.path))
                 time.sleep(self.poll_interval)
         self.locked = True
         return self
