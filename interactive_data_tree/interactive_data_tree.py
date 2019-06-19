@@ -680,6 +680,7 @@ class NumpyStorageInterface(StorageInterface):
     def save(self):
         pass
 
+
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
     extension = 'mdl'
@@ -1176,7 +1177,11 @@ class RepoLeaf(object):
                                                                              storage_type,
                                                                              self.parent_repo.name)
                 prompt += "\nOverwrite this object? (y/n)"
-                y = prompt_input(prompt)
+                try:
+                    y = raw_input(prompt)
+                except NameError:
+                    y = input(prompt)
+
                 if y == 'y' or y == 'yes':
                     print("Proceeding with overwrite...")
                 else:
@@ -1201,8 +1206,8 @@ class RepoLeaf(object):
             message_user("Save Complete")
             message_user("-------------")
 
-        self.parent_repo._append_to_master_log(operation='save', leaf=self,
-                                               author=md_props.get('author', None))
+        #self.parent_repo._append_to_master_log(operation='save', leaf=self,
+        #                                       author=md_props.get('author', None))
 
         #self.parent_repo._add_to_index(leaf=self)
         self.parent_repo.write_hooks(self)
@@ -1227,8 +1232,8 @@ class RepoLeaf(object):
         message_user("Deleting:\n%s" % "\n".join(filenames))
         [os.remove(fn) for fn in filenames]
 
-        self.parent_repo._append_to_master_log(operation='delete', leaf=self,
-                                               author=author)
+        #self.parent_repo._append_to_master_log(operation='delete', leaf=self,
+        #                                       author=author)
         #self.parent_repo._remove_from_index(self, missing_err='ignore')
         self.parent_repo.delete_hooks(self)
         self.parent_repo.refresh()
@@ -1257,9 +1262,9 @@ class RepoLeaf(object):
                 new_p = os.path.join(base_p, new_fname)
                 shutil.move(f, new_p)
 
-        self.parent_repo._append_to_master_log(operation='rename',
-                                               leaf=self,
-                                               author=author)
+        #self.parent_repo._append_to_master_log(operation='rename',
+        #                                       leaf=self,
+        #                                       author=author)
 
         try:
             # Remove storage type from the index
@@ -1315,9 +1320,9 @@ class RepoLeaf(object):
         self.parent_repo.delete_hooks(self)
         self.parent_repo.refresh()
         tree.refresh()
-        self.parent_repo._append_to_master_log(operation='move', leaf=self,
-                                               author=author,
-                                               storage_type=self.si.storage_name)
+        #self.parent_repo._append_to_master_log(operation='move', leaf=self,
+        #                                       author=author,
+        #                                       storage_type=self.si.storage_name)
 
         #self.parent_repo._add_to_index(tree[self.name])
         self.parent_repo.write_hooks(tree[self.name])
@@ -1932,7 +1937,7 @@ Sub-Repositories
         else:
             self.add_repo_tree(RepoTree(repo_root=repo_root, parent_repo=self))
 
-        self._append_to_master_log(operation='mkrepo')
+        #self._append_to_master_log(operation='mkrepo')
 
         return self.__sub_repo_table[name]
 
