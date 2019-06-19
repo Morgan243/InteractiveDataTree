@@ -995,7 +995,7 @@ try:
     register_storage_interface(KerasModelStorageInterface, 'keras', 5,
                                types=[keras.Model, keras.Sequential])
 except ImportError:
-    pass
+    raise
 
 
 class RepoLeaf(object):
@@ -1112,7 +1112,7 @@ class RepoLeaf(object):
             setattr(self, self.si.storage_name, self.si)
             self.md = self.si.md
             for l in self.si.expose_on_leaf:
-                setattr(self, l, getattr(self.si, l))
+                setattr(self, l, getattr(self.si, l, None))
 
         elif len(fnames) > 1:
             msg = "to many files: %s" % "\n".join(fnames)
