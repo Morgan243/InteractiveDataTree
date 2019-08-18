@@ -1611,9 +1611,10 @@ Sub-Repositories
         if not ix_exists:
             message_user("Master index doesn't exists yet, creating it at %s.%s"
                          % (root_repo.name, ix_name))
-            root_repo.save(dict(), name=ix_name, author='system',
-                           comments='index of objects across entire tree',
-                           tags='idt_index', verbose=False)
+            #root_repo.save(dict(), name=ix_name, author='system',
+            #               comments='index of objects across entire tree',
+            #               tags='idt_index', verbose=False, auto_overwrite=True)
+            self._write_master_index(dict())
         return root_repo.load(name=ix_name, storage_type='pickle')
 
     def _write_master_index(self, index):
