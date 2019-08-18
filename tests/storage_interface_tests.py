@@ -36,6 +36,17 @@ class StorageInterfaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             si = idt.StorageInterface('foo')
 
+    def test_multi_metadata(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        n = 10
+        for v in range(n):
+            rt.save(v, name='multiwrite', comments='this is v=%d' % v,
+                    auto_overwrite=True)
+
+        mds = rt['multiwrite'].read_metadata(most_recent=False)
+        # TODO: Metadata has an empty first entry, adding one to length
+        self.assertEqual(len(mds), n+1)
+
     def test_pandas_storage(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
