@@ -680,6 +680,7 @@ class NumpyStorageInterface(StorageInterface):
     def save(self):
         pass
 
+
 class ModelStorageInterface(StorageInterface):
     storage_name = 'model'
     extension = 'mdl'
@@ -994,7 +995,22 @@ try:
     register_storage_interface(KerasModelStorageInterface, 'keras', 5,
                                types=[keras.Model, keras.Sequential])
 except ImportError:
-    raise
+    #raise
+    print("Keras cannot be imported - its storage interface will be unavailable")
+
+def is_valid_idt_from_fname(fname):
+    s = fname.split('.')
+    if len(s) == 1:
+        pass
+    elif len(s) == 2:
+        maybe_o_name, maybe_o_type = s
+        if maybe_o_type in storage_interfaces:
+            return True
+    elif len(s) == 3:
+        # Possible Lock file
+        pass
+
+    return False
 
 
 class RepoLeaf(object):
@@ -1271,7 +1287,6 @@ class RepoLeaf(object):
         self.parent_repo.write_hooks(self)
         self.parent_repo.refresh()
         self.parent_repo[new_name].update_references(orig_si_ref)
-
 
     def move(self, tree, author):
         """
@@ -1717,6 +1732,7 @@ Sub-Repositories
         """
         mde = idr_config['metadata_extension']
         repe = idr_config['repo_extension']
+        locke = idr_config['lock_extension']
         repo_curr = dict(self.__sub_repo_table)
         obj_curr = dict(self.__repo_object_table)
         self.__sub_repo_table = dict()
@@ -1730,17 +1746,16 @@ Sub-Repositories
         repo_items = [f for f in matching_items
                           if f[-len(repe):] == repe]
         obj_items = [f for f in matching_items
-                      if f[-len(repe):] != repe]
+                      if f[-len(repe):] != repe
+                      and f[-len(locke):] != locke]
 
         for rf in repo_items:
             r = rf.split('.')
             if len(r) == 2:
                 base_name, ext = r
-            else:
-                msg = "-"*30
-                msg += "\nToo many files found in %s" % self.idr_prop['repo_root']
-                msg += "\n%s\n" % r
-                raise ValueError(msg)
+            elif len(r) > 2:
+                # Assume the repo name has a period?
+                raise ValueError("Repository name cannot have a '.': %s" % rf)
 
             if base_name in repo_curr:
                 self.add_repo_tree(repo_curr[base_name].refresh())
@@ -1752,11 +1767,9 @@ Sub-Repositories
             r = of.split('.')
             if len(r) == 2:
                 base_name, ext = r
-            else:
-                msg = "-"*30
-                msg += "\nToo many files found in %s" % self.idr_prop['repo_root']
-                msg += "\n%s\n" % r
-                raise ValueError(msg)
+            elif len(r) > 2:
+                # Assume the repo name has a period?
+                raise ValueError("Object name cannot have a '.': %s" % of)
 
             obj_files = list(filter(lambda s: (base_name == s.split('.')[0]), obj_items))
             # Had the object before - don't create new Leaf
