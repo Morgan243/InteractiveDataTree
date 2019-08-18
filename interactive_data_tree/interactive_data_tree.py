@@ -998,19 +998,19 @@ except ImportError:
     #raise
     print("Keras cannot be imported - its storage interface will be unavailable")
 
-def is_valid_idt_from_fname(fname):
-    s = fname.split('.')
-    if len(s) == 1:
-        pass
-    elif len(s) == 2:
-        maybe_o_name, maybe_o_type = s
-        if maybe_o_type in storage_interfaces:
-            return True
-    elif len(s) == 3:
-        # Possible Lock file
-        pass
-
-    return False
+#def is_valid_idt_from_fname(fname):
+#    s = fname.split('.')
+#    if len(s) == 1:
+#        pass
+#    elif len(s) == 2:
+#        maybe_o_name, maybe_o_type = s
+#        if maybe_o_type in storage_interfaces:
+#            return True
+#    elif len(s) == 3:
+#        # Possible Lock file
+#        pass
+#
+#    return False
 
 
 class RepoLeaf(object):
