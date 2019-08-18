@@ -83,7 +83,8 @@ class StorageInterfaceTests(unittest.TestCase):
          2000 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
          2001 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
          }
-        lvl1.save(df_grps, 'test_gdf', storage_type='ghdf')
+        lvl1.save(df_grps, 'test_gdf', storage_type='ghdf',
+                  extra_md_stuff='foobar')
         pd.util.testing.assert_frame_equal(df_grps[1999],
                                            lvl1.test_gdf[1999])
         pd.util.testing.assert_frame_equal(df_grps[2000],
@@ -92,6 +93,7 @@ class StorageInterfaceTests(unittest.TestCase):
         pd.util.testing.assert_frame_equal(concat_df,
                                            lvl1.test_gdf[[1999, 2000]])
 
+        html_str = lvl1.test_gdf._repr_html_()
 
         import numpy as np
         lvl1.test_gdf[2002] = df_grps[1999] * 3.3

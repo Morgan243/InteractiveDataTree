@@ -277,7 +277,8 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl1.save(df, 'test_df',
                   storage_type='hdf')
         lvl1.save('not a df', 'test_str',
-                  storage_type='pickle')
+                  storage_type='pickle',
+                  something_extra='extra metadata to get coverage')
 
         lvl1._repr_html_()
         lvl1.test_df._repr_html_()
