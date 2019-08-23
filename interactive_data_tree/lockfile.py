@@ -58,7 +58,7 @@ class LockFile(object):
         p = os.path.join(*dirs)
         valid_path = os.path.isdir(p)
         if not valid_path:
-            msg = "The lock path '%s' is not since '%s' is not a directory"
+            msg = "The lock path '%s' is not valid - '%s' is not a directory"
             raise ValueError(msg % (path, p))
 
     def __enter__(self):
@@ -72,7 +72,7 @@ class LockFile(object):
         os.remove(self.path)
         return self
 
-    def lock(self):
+    def lock(self, timeout=None):
         block_count = 0
         while True:
             try:
@@ -84,6 +84,10 @@ class LockFile(object):
                 if self.wait_msg:
                     print("[%d] Blocking on %s" % (block_count, self.path))
                 time.sleep(self.poll_interval)
+                if timeout is not None:
+                    raise TimeoutError("Lock on %s timed out (%d tries)"
+                                       % (self.path, timeout))
+
         self.locked = True
         return self
 
