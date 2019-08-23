@@ -530,7 +530,8 @@ class HDFGroupStorageInterface(HDFStorageInterface):
                 if concat:
                     ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
                 else:
-                    ret = {g:hdf_store.get(g) for g in hdf_keys}
+                    ret = {g[len(self.hdf_data_level)+1:]: hdf_store.get(g)
+                           for g in hdf_keys}
 
             hdf_store.close()
         return ret
