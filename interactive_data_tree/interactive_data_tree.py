@@ -1517,52 +1517,6 @@ Sub-Repositories
 
         self.__doc__ = docs + d_str
 
-    def _load_master_log(self):
-        root_repo = self.get_root()
-        log_name = idr_config['master_log']
-        log_exists = log_name in root_repo.list(list_repos=False)
-        if not log_exists:
-            message_user("Log doesn't exist yet, creating it at %s.%s" % (self.name,
-                                                                          log_name) )
-            root_repo.save([], name=log_name, author='system',
-                           comments='log of events across entire tree',
-                           verbose=False,
-                           tags='idt_log')
-
-        return root_repo.load(name=log_name)
-
-    def _write_master_log(self, log_data):
-        root_repo = self.get_root()
-        log_name = idr_config['master_log']
-
-        root_repo.save(log_data, name=log_name, author='system',
-                       comments='log of events across entire tree',
-                       verbose=False,
-                       tags='log', auto_overwrite=True)
-
-    def _append_to_master_log(self, operation,
-                              leaf=None, storage_type=None,
-                              author=None):
-        # Don't need to index the LOG itself
-        if leaf is not None:
-            if leaf.name in (idr_config['master_log'], idr_config['master_index']):
-                return
-
-        log_data = self._load_master_log()
-
-        entry = dict(base_master_log_entry)
-        entry['repo_tree'] = self.get_parent_repo_names() + [self.name]
-        entry['repo_leaf'] = None if leaf is None else leaf.name
-        entry['storage_type'] = storage_type
-        entry['repo_operation'] = operation
-        entry['timestamp'] = datetime.now()
-        entry['cwd'] = os.getcwd()
-        entry['nb_name'] = shared_metadata.get('notebook_name')
-        entry['author'] = author if author is not None else shared_metadata.get('author')
-
-        log_data.append(entry)
-        self._write_master_log(log_data)
-
     def _ipython_key_completions_(self):
         k = list(self.__sub_repo_table.keys())
         k += list(self.__repo_object_table.keys())
