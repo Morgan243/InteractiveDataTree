@@ -36,6 +36,34 @@ class StorageInterfaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             si = idt.StorageInterface('foo')
 
+    def test_multi_metadata(self):
+        rt = idt.RepoTree(repo_root=self.repo_root_path)
+        n = 10
+        for v in range(n):
+            rt.save(v, name='multiwrite', comments='this is v=%d' % v,
+                    auto_overwrite=True)
+
+        mds = rt['multiwrite'].read_metadata(most_recent=False)
+        # TODO: Metadata has an empty first entry, adding one to length
+        self.assertEqual(len(mds), n+1)
+
+    def test_bad_storage_registration(self):
+        class BadSI:
+            pass
+        with self.assertRaises(ValueError):
+            idt.register_storage_interface(BadSI, 'BadSI')
+
+        with self.assertRaises(ValueError):
+            idt.register_storage_interface(idt.HDFStorageInterface, 'hdf')
+
+        class HDFExtra(idt.HDFStorageInterface):
+            extension = 'hdf_extra'
+            pass
+        #with self.assertRaises(ValueError):
+        idt.register_storage_interface(HDFExtra,
+                                           'hdf_extra',
+                                       types=pd.DataFrame)
+
     def test_pandas_storage(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)
         lvl1 = rt.mkrepo('lvl1')
@@ -55,7 +83,8 @@ class StorageInterfaceTests(unittest.TestCase):
          2000 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
          2001 : pd.DataFrame(dict(a=range(100), b=range(100, 200))),
          }
-        lvl1.save(df_grps, 'test_gdf', storage_type='ghdf')
+        lvl1.save(df_grps, 'test_gdf', storage_type='ghdf',
+                  extra_md_stuff='foobar')
         pd.util.testing.assert_frame_equal(df_grps[1999],
                                            lvl1.test_gdf[1999])
         pd.util.testing.assert_frame_equal(df_grps[2000],
@@ -64,6 +93,7 @@ class StorageInterfaceTests(unittest.TestCase):
         pd.util.testing.assert_frame_equal(concat_df,
                                            lvl1.test_gdf[[1999, 2000]])
 
+        html_str = lvl1.test_gdf._repr_html_()
 
         import numpy as np
         lvl1.test_gdf[2002] = df_grps[1999] * 3.3

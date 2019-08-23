@@ -12,7 +12,11 @@ from .context import interactive_data_tree as idt
 
 EXEC_PYTHON3 = sys.version_info > (3, 0)
 # Patching the builtin directly doesn't seem to always work in Python 2
-builtins_input_mock_str = 'interactive_data_tree.interactive_data_tree.prompt_input'
+#builtins_input_mock_str = 'interactive_data_tree.interactive_data_tree.prompt_input'
+if EXEC_PYTHON3:
+    builtins_input_mock_str = 'builtins.input'
+else:
+    builtins_input_mock_str = 'builtins.raw_input'
 remote_dir = '/export/datasets/idt'
 
 class InteractiveDataRepo(unittest.TestCase):
@@ -48,7 +52,7 @@ class InteractiveDataRepo(unittest.TestCase):
         rep_tree = idt.RepoTree(repo_root=self.repo_root_path)
         #rep_tree.mkrepo(name='lvl1a')
         t_obj = 'some string'
-        rep_tree.save(t_obj, 'test_string')
+        rep_tree.save(t_obj, 'test_string', auto_overwrite=True)
 
         s = str(rep_tree.test_string.pickle)
         s = str(rep_tree.test_string)
@@ -56,7 +60,8 @@ class InteractiveDataRepo(unittest.TestCase):
 
         self.assertTrue(hasattr(rep_tree, 'test_string'))
         repos, objs = rep_tree.list()
-        self.assertEqual(['INDEX', 'LOG', 'test_string'], objs)
+        self.assertEqual(['INDEX', #'LOG',
+                          'test_string'], objs)
 
         self.assertEqual(t_obj, rep_tree.load('test_string'))
         self.assertEqual(t_obj, rep_tree.test_string.load(storage_type='pickle'))
@@ -68,14 +73,14 @@ class InteractiveDataRepo(unittest.TestCase):
         rps = rep_tree.list_repos()
         lvs = rep_tree.list_leaves()
         self.assertEqual(len(rps),  1)
-        self.assertEqual(len(lvs),  3)
+        self.assertEqual(len(lvs),  2)
 
         lvs = list(rep_tree.iterleaves(progress_bar=False))
         objs = list(rep_tree.iterobjs(progress_bar=False))
         rps = list(rep_tree.iterrepos(progress_bar=False))
         self.assertEqual(len(rps),  1)
-        self.assertEqual(len(objs),  3)
-        self.assertEqual(len(lvs),  3)
+        self.assertEqual(len(objs),  2)
+        self.assertEqual(len(lvs),  2)
 
         with self.assertRaises(NotImplementedError):
             rep_tree.test_string['foo']
@@ -272,7 +277,8 @@ class InteractiveDataRepo(unittest.TestCase):
         lvl1.save(df, 'test_df',
                   storage_type='hdf')
         lvl1.save('not a df', 'test_str',
-                  storage_type='pickle')
+                  storage_type='pickle',
+                  something_extra='extra metadata to get coverage')
 
         lvl1._repr_html_()
         lvl1.test_df._repr_html_()
@@ -326,7 +332,7 @@ class InteractiveDataRepo(unittest.TestCase):
         self.assertIn('lvl1', comps)
         self.assertIn('foobar', comps)
         self.assertIn('some_data', comps)
-        self.assertEqual(len(comps), 5)
+        self.assertEqual(len(comps), 4)
 
     def test_unsupported_object_exceptions(self):
         rt = idt.RepoTree(repo_root=self.repo_root_path)

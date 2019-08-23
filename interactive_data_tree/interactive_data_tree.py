@@ -561,7 +561,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='a')
             try:
-                from tqdm import tqdm
+                from tqdm.auto import tqdm
                 with tqdm(total=len(d_obj_iter)) as pbar:
                     for k, v in d_obj_iter.items():
                         pbar.set_description("Storing group " + str(k))
@@ -998,19 +998,19 @@ except ImportError:
     #raise
     print("Keras cannot be imported - its storage interface will be unavailable")
 
-def is_valid_idt_from_fname(fname):
-    s = fname.split('.')
-    if len(s) == 1:
-        pass
-    elif len(s) == 2:
-        maybe_o_name, maybe_o_type = s
-        if maybe_o_type in storage_interfaces:
-            return True
-    elif len(s) == 3:
-        # Possible Lock file
-        pass
-
-    return False
+#def is_valid_idt_from_fname(fname):
+#    s = fname.split('.')
+#    if len(s) == 1:
+#        pass
+#    elif len(s) == 2:
+#        maybe_o_name, maybe_o_type = s
+#        if maybe_o_type in storage_interfaces:
+#            return True
+#    elif len(s) == 3:
+#        # Possible Lock file
+#        pass
+#
+#    return False
 
 
 class RepoLeaf(object):
@@ -1022,7 +1022,7 @@ class RepoLeaf(object):
     __metaclass__ = abc.ABCMeta
 
     def __init__(self, parent_repo, name, fnames=None,
-                 update_doc_strings=False):
+                 update_doc_strings=True):
         """
         Parameters
         ----------
@@ -1611,9 +1611,10 @@ Sub-Repositories
         if not ix_exists:
             message_user("Master index doesn't exists yet, creating it at %s.%s"
                          % (root_repo.name, ix_name))
-            root_repo.save(dict(), name=ix_name, author='system',
-                           comments='index of objects across entire tree',
-                           tags='idt_index', verbose=False)
+            #root_repo.save(dict(), name=ix_name, author='system',
+            #               comments='index of objects across entire tree',
+            #               tags='idt_index', verbose=False, auto_overwrite=True)
+            self._write_master_index(dict())
         return root_repo.load(name=ix_name, storage_type='pickle')
 
     def _write_master_index(self, index):
@@ -1980,7 +1981,7 @@ Sub-Repositories
         to_iter = sorted(self.__repo_object_table.keys())
         if progress_bar:
             try:
-                from tqdm import tqdm
+                from tqdm.auto import tqdm
                 with tqdm(total=len(self.__repo_object_table)) as pbar:
                     for k in to_iter:
                         pbar.set_description(k)
@@ -1997,7 +1998,7 @@ Sub-Repositories
         to_iter = sorted(self.__sub_repo_table.keys())
         if progress_bar:
             try:
-                from tqdm import tqdm
+                from tqdm.auto import tqdm
                 with tqdm(total=len(self.__sub_repo_table)) as pbar:
                     for k in to_iter:
                         pbar.set_description(k)

@@ -1,12 +1,12 @@
 language: python
 python:
-  - "2.7"
   - "3.6"
+  - "3.7"
 install:
   - python setup.py install
   - pip install nose coveralls sklearn scipy numpy
   - pip install tensorflow tables h5py
-  - pip install pygments keras future
+  - pip install pygments keras future tqdm
 script:
   - nosetests --with-coverage --cover-package=interactive_data_tree
 after_success: coveralls
