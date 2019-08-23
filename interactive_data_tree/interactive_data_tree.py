@@ -130,7 +130,7 @@ class StorageInterface(object):
         -------
         Object stored
         """
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='rb') as f:
                 obj = pickle.load(f)
             return obj
@@ -154,7 +154,7 @@ class StorageInterface(object):
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='wb') as f:
                 pickle.dump(obj, f, protocol=2)
 
@@ -370,7 +370,7 @@ class HDFStorageInterface(StorageInterface):
         -------
         Object stored
         """
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             obj = pd.read_hdf(self.path, mode='r')
         return obj
 
@@ -391,7 +391,7 @@ class HDFStorageInterface(StorageInterface):
         if not self.__valid_object_for_storage(obj):
             raise ValueError("Expected Pandas Data object, got %s" % type(obj))
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='w')
             hdf_store.put(HDFStorageInterface.hdf_data_level,
                           obj, format=HDFStorageInterface.hdf_format)
@@ -417,7 +417,7 @@ class HDFStorageInterface(StorageInterface):
         -------
         Pandas data object of the first n entries
         """
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
@@ -511,7 +511,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         self.update(**kargs)
 
     def load(self, group=None, concat=True):
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='r')
             hdf_keys = hdf_store.keys()
             prefix = HDFGroupStorageInterface.hdf_data_level + '/'
@@ -558,7 +558,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         else:
             d_obj_iter = {gk: obj.get_group(gk) for gk in obj.groups.keys()}
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='a')
             try:
                 from tqdm import tqdm
@@ -585,7 +585,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
             raise ValueError(msg)
 
         d_grps = dict(grps)
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='a')
             for k, v in d_grps.items():
                 hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
@@ -753,7 +753,7 @@ class KerasModelStorageInterface(ModelStorageInterface):
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             model.save(self.path, overwrite=True)
             # TODO: Extract SI metadata infor about the model
             # e.g. number of layers, types of layers, in/put dims
@@ -762,7 +762,7 @@ class KerasModelStorageInterface(ModelStorageInterface):
 
     def load(self, **kwargs):
         import keras
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             obj = keras.models.load_model(self.path)
         return obj
 
@@ -853,7 +853,7 @@ class SQLStorageInterface(StorageInterface):
     required_metadata = []
 
     def load(self):
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='r') as f:
                 obj = json.load(f)
         sql_obj = SQL(**obj)
@@ -874,7 +874,7 @@ class SQLStorageInterface(StorageInterface):
             raise ValueError(msg % ", ".join(missing_md))
 
         store_dict = dict(obj.asdict())
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='w') as f:
                 json.dump(store_dict, f)
 
@@ -1271,7 +1271,7 @@ class RepoLeaf(object):
         # Remove all files using associated lock files
         for f, l_f in files_and_locks:
             # Will break if lock file is not valid...
-            with LockFile(l_f, lock_type='wlock'):
+            with LockFile(l_f):
                 fname = os.path.split(f)[-1]
                 new_fname = fname.replace(orig_name, new_name)
                 new_p = os.path.join(base_p, new_fname)
@@ -1325,7 +1325,7 @@ class RepoLeaf(object):
         # Remove all files using associated lock files
         for f, l_f in files_and_locks:
             # Will break if lock file is not valid...
-            with LockFile(l_f, lock_type='wlock'):
+            with LockFile(l_f):
                 fname = os.path.split(f)[-1]
                 new_p = os.path.join(new_base_p, fname)
                 shutil.move(f, new_p)
@@ -2101,13 +2101,3 @@ Sub-Repositories
         print("\n".join(objs))
 
 
-#def reinit_metadata()
-
-## ReInit-metadata option
-## PARAMS: reinit_md, md_port=func
-## - Set Metadata.metadata_port = md_port
-##      - Default port should try to extract user_md in a few ways
-##        but returns a new MD
-## - Load all metadata into a map of uri to the md
-##
-## - Save this dict in root and
