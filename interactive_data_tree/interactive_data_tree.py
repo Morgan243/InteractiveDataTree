@@ -1427,11 +1427,11 @@ class RepoTree(object):
         self.__repo_object_table = dict()
         self.__sub_repo_table = dict()
 
-        index_f = lambda lf: self._add_to_index(lf)
-        self.__write_hooks = dict(index=index_f)
+        #index_f = lambda lf: self._add_to_index(lf)
+        self.__write_hooks = dict()#dict(index=index_f)
 
-        del_index_f = lambda lf: self._remove_from_index(lf)
-        self.__delete_hooks = dict(index=del_index_f)
+        #del_index_f = lambda lf: self._remove_from_index(lf)
+        self.__delete_hooks = dict()#dict(index=del_index_f)
 
         self.refresh()
 
@@ -1607,7 +1607,7 @@ Sub-Repositories
         #   - Each type has its own index, so use storage type to distinguish
         root_repo = self.get_root()
         ix_name = idr_config['master_index']
-        ix_exists = ix_name in root_repo.list(list_repos=False)
+        ix_exists = ix_name in root_repo.refresh().list(list_repos=False)
         if not ix_exists:
             message_user("Master index doesn't exists yet, creating it at %s.%s"
                          % (root_repo.name, ix_name))
