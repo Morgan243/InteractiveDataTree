@@ -130,7 +130,7 @@ class StorageInterface(object):
         -------
         Object stored
         """
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='rb') as f:
                 obj = pickle.load(f)
             return obj
@@ -154,7 +154,7 @@ class StorageInterface(object):
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='wb') as f:
                 pickle.dump(obj, f, protocol=2)
 
@@ -370,7 +370,7 @@ class HDFStorageInterface(StorageInterface):
         -------
         Object stored
         """
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             obj = pd.read_hdf(self.path, mode='r')
         return obj
 
@@ -391,7 +391,7 @@ class HDFStorageInterface(StorageInterface):
         if not self.__valid_object_for_storage(obj):
             raise ValueError("Expected Pandas Data object, got %s" % type(obj))
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='w')
             hdf_store.put(HDFStorageInterface.hdf_data_level,
                           obj, format=HDFStorageInterface.hdf_format)
@@ -417,7 +417,7 @@ class HDFStorageInterface(StorageInterface):
         -------
         Pandas data object of the first n entries
         """
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             obj = pd.read_hdf(self.path, mode='r', stop=n)
         return obj
 
@@ -511,7 +511,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         self.update(**kargs)
 
     def load(self, group=None, concat=True):
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='r')
             hdf_keys = hdf_store.keys()
             prefix = HDFGroupStorageInterface.hdf_data_level + '/'
@@ -530,7 +530,8 @@ class HDFGroupStorageInterface(HDFStorageInterface):
                 if concat:
                     ret = pd.concat(hdf_store.get(g) for g in hdf_keys)
                 else:
-                    ret = {g:hdf_store.get(g) for g in hdf_keys}
+                    ret = {g[len(self.hdf_data_level)+1:]: hdf_store.get(g)
+                           for g in hdf_keys}
 
             hdf_store.close()
         return ret
@@ -558,7 +559,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
         else:
             d_obj_iter = {gk: obj.get_group(gk) for gk in obj.groups.keys()}
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='a')
             try:
                 from tqdm.auto import tqdm
@@ -585,7 +586,7 @@ class HDFGroupStorageInterface(HDFStorageInterface):
             raise ValueError(msg)
 
         d_grps = dict(grps)
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             hdf_store = pd.HDFStore(self.path, mode='a')
             for k, v in d_grps.items():
                 hdf_p = HDFGroupStorageInterface.hdf_data_level + '/' + str(k)
@@ -753,7 +754,7 @@ class KerasModelStorageInterface(ModelStorageInterface):
             msg = "Missing required metadata fields: %s"
             raise ValueError(msg % ", ".join(missing_md))
 
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             model.save(self.path, overwrite=True)
             # TODO: Extract SI metadata infor about the model
             # e.g. number of layers, types of layers, in/put dims
@@ -762,7 +763,7 @@ class KerasModelStorageInterface(ModelStorageInterface):
 
     def load(self, **kwargs):
         import keras
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             obj = keras.models.load_model(self.path)
         return obj
 
@@ -853,7 +854,7 @@ class SQLStorageInterface(StorageInterface):
     required_metadata = []
 
     def load(self):
-        with LockFile(self.lock_file, lock_type='rlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='r') as f:
                 obj = json.load(f)
         sql_obj = SQL(**obj)
@@ -874,7 +875,7 @@ class SQLStorageInterface(StorageInterface):
             raise ValueError(msg % ", ".join(missing_md))
 
         store_dict = dict(obj.asdict())
-        with LockFile(self.lock_file, lock_type='wlock'):
+        with LockFile(self.lock_file):
             with open(self.path, mode='w') as f:
                 json.dump(store_dict, f)
 
@@ -1271,7 +1272,7 @@ class RepoLeaf(object):
         # Remove all files using associated lock files
         for f, l_f in files_and_locks:
             # Will break if lock file is not valid...
-            with LockFile(l_f, lock_type='wlock'):
+            with LockFile(l_f):
                 fname = os.path.split(f)[-1]
                 new_fname = fname.replace(orig_name, new_name)
                 new_p = os.path.join(base_p, new_fname)
@@ -1325,7 +1326,7 @@ class RepoLeaf(object):
         # Remove all files using associated lock files
         for f, l_f in files_and_locks:
             # Will break if lock file is not valid...
-            with LockFile(l_f, lock_type='wlock'):
+            with LockFile(l_f):
                 fname = os.path.split(f)[-1]
                 new_p = os.path.join(new_base_p, fname)
                 shutil.move(f, new_p)
@@ -1516,52 +1517,6 @@ Sub-Repositories
 {sr}\n\n""".format(ro=ro_str, sr=sr_str)
 
         self.__doc__ = docs + d_str
-
-    def _load_master_log(self):
-        root_repo = self.get_root()
-        log_name = idr_config['master_log']
-        log_exists = log_name in root_repo.list(list_repos=False)
-        if not log_exists:
-            message_user("Log doesn't exist yet, creating it at %s.%s" % (self.name,
-                                                                          log_name) )
-            root_repo.save([], name=log_name, author='system',
-                           comments='log of events across entire tree',
-                           verbose=False,
-                           tags='idt_log')
-
-        return root_repo.load(name=log_name)
-
-    def _write_master_log(self, log_data):
-        root_repo = self.get_root()
-        log_name = idr_config['master_log']
-
-        root_repo.save(log_data, name=log_name, author='system',
-                       comments='log of events across entire tree',
-                       verbose=False,
-                       tags='log', auto_overwrite=True)
-
-    def _append_to_master_log(self, operation,
-                              leaf=None, storage_type=None,
-                              author=None):
-        # Don't need to index the LOG itself
-        if leaf is not None:
-            if leaf.name in (idr_config['master_log'], idr_config['master_index']):
-                return
-
-        log_data = self._load_master_log()
-
-        entry = dict(base_master_log_entry)
-        entry['repo_tree'] = self.get_parent_repo_names() + [self.name]
-        entry['repo_leaf'] = None if leaf is None else leaf.name
-        entry['storage_type'] = storage_type
-        entry['repo_operation'] = operation
-        entry['timestamp'] = datetime.now()
-        entry['cwd'] = os.getcwd()
-        entry['nb_name'] = shared_metadata.get('notebook_name')
-        entry['author'] = author if author is not None else shared_metadata.get('author')
-
-        log_data.append(entry)
-        self._write_master_log(log_data)
 
     def _ipython_key_completions_(self):
         k = list(self.__sub_repo_table.keys())
@@ -2102,13 +2057,3 @@ Sub-Repositories
         print("\n".join(objs))
 
 
-#def reinit_metadata()
-
-## ReInit-metadata option
-## PARAMS: reinit_md, md_port=func
-## - Set Metadata.metadata_port = md_port
-##      - Default port should try to extract user_md in a few ways
-##        but returns a new MD
-## - Load all metadata into a map of uri to the md
-##
-## - Save this dict in root and

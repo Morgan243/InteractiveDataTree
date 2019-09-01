@@ -93,6 +93,21 @@ class StorageInterfaceTests(unittest.TestCase):
         pd.util.testing.assert_frame_equal(concat_df,
                                            lvl1.test_gdf[[1999, 2000]])
 
+        load_map = lvl1.test_gdf.load(group=[1999, 2000], concat=False)
+        for k, _df in load_map.items():
+            pd.util.testing.assert_frame_equal(df_grps[k], _df)
+
+
+        load_map = lvl1.test_gdf.load(group=None, concat=False)
+        for k, _df in load_map.items():
+            pd.util.testing.assert_frame_equal(df_grps[int(k)], _df)
+
+
+        all_grp_df = lvl1.test_gdf.load(group=None, concat=True)
+        pd.util.testing.assert_frame_equal(pd.concat(df_grps.values()),
+                                           all_grp_df)
+
+
         html_str = lvl1.test_gdf._repr_html_()
 
         import numpy as np

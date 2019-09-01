@@ -36,6 +36,15 @@ class InteractiveDataRepo(unittest.TestCase):
         with self.assertRaises(ValueError):
             idt.LockFile('/not/a/path/not_a_file.lock')
 
+        lock_a = idt.LockFile(self.repo_root_path + '/shared.lock')
+        lock_b = idt.LockFile(self.repo_root_path + '/shared.lock')
+        lock_a.lock()
+        with self.assertRaises(TimeoutError):
+            lock_b.lock(timeout=1)
+
+        lock_a.unlock()
+
+
     def test_repo_creation(self):
         rep_tree = idt.RepoTree(repo_root=self.repo_root_path)
         self.assertEqual(rep_tree.idr_prop['repo_root'], self.repo_root_path + '.repo')

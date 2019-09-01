@@ -29,8 +29,8 @@ class LockFile(object):
     A context object (use in 'with' statement) that attempts to create
     a lock file on entry, with blocking/retrying until successful
     """
-    lock_types = ('rlock', 'wlock')
-    def __init__(self, path, lock_type='lock',
+    #lock_types = ('rlock', 'wlock')
+    def __init__(self, path, #lock_type='lock',
                  poll_interval=1,
                  wait_msg=True):
         """
@@ -47,18 +47,18 @@ class LockFile(object):
         self.wait_msg = wait_msg
         self.locked = False
 
-        if lock_type not in LockFile.lock_types:
-            raise ValueError("Unknown lock type: %s\nExpected one of %s"
-                             % (str(lock_type), ", ".join(LockFile.lock_types)))
+        #if lock_type not in LockFile.lock_types:
+        #    raise ValueError("Unknown lock type: %s\nExpected one of %s"
+        #                     % (str(lock_type), ", ".join(LockFile.lock_types)))
 
-        self.lock_type = lock_type
+        #self.lock_type = lock_type
 
         # Make sure the directory exists
         dirs = os.path.split(path)[:-1]
         p = os.path.join(*dirs)
         valid_path = os.path.isdir(p)
         if not valid_path:
-            msg = "The lock path '%s' is not since '%s' is not a directory"
+            msg = "The lock path '%s' is not valid - '%s' is not a directory"
             raise ValueError(msg % (path, p))
 
     def __enter__(self):
@@ -72,7 +72,7 @@ class LockFile(object):
         os.remove(self.path)
         return self
 
-    def lock(self):
+    def lock(self, timeout=None):
         block_count = 0
         while True:
             try:
@@ -81,10 +81,13 @@ class LockFile(object):
                 break
             except fs_except as e:
                 block_count += 1
-                #if self.wait_msg is not None:
                 if self.wait_msg:
                     print("[%d] Blocking on %s" % (block_count, self.path))
                 time.sleep(self.poll_interval)
+                if timeout is not None:
+                    raise TimeoutError("Lock on %s timed out (%d tries)"
+                                       % (self.path, timeout))
+
         self.locked = True
         return self
 
