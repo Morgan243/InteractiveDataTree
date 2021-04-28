@@ -4,6 +4,7 @@ python:
   - "3.7"
 install:
   - python setup.py install
+  - pip install cython
   - pip install nose coveralls sklearn scipy numpy
   - pip install tensorflow tables h5py
   - pip install pygments keras future tqdm
