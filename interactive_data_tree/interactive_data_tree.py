@@ -360,7 +360,7 @@ class HDFStorageInterface(StorageInterface):
 
     @staticmethod
     def __valid_object_for_storage(obj):
-        return isinstance(obj, (pd.Series, pd.DataFrame, pd.Panel))
+        return isinstance(obj, (pd.Series, pd.DataFrame))
 
     def load(self):
         """
