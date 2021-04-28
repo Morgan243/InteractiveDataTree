@@ -3,11 +3,12 @@ python:
   - "3.6"
   - "3.7"
 install:
-  - python setup.py install
   - pip install cython
   - pip install nose coveralls sklearn scipy numpy
   - pip install tensorflow tables h5py
   - pip install pygments keras future tqdm
+  - python setup.py install
+
 script:
   - nosetests --with-coverage --cover-package=interactive_data_tree
 after_success: coveralls
