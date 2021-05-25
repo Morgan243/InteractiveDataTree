@@ -2,10 +2,11 @@ language: python
 python:
   - "3.6"
   - "3.7"
+  - "3.8"
 install:
   - pip install cython
   - pip install nose coveralls sklearn scipy numpy
-  - pip install tensorflow tables h5py
+  - pip install tensorflow tables h5py==2.10.0 
   - pip install pygments keras future tqdm
   - python setup.py install
 
